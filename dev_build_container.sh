@@ -8,7 +8,15 @@
 # This Script works on WSL2 _but_ you cant use
 # WSL2 Windows Host mounted paths for the data.
 
-dc=$(which docker-compose)
+# Check for docker compose (plugin) first, fallback to docker-compose (standalone)
+if docker compose version >/dev/null 2>&1; then
+    dc=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+    dc=(docker-compose)
+else
+    echo 'ERROR: Neither "docker compose" nor "docker-compose" found' ; exit 1
+fi
+
 osversion=$(uname)
 dbarr=(mariadb103 mariadb104 mariadb105 mariadb106 mysql57 mysql8)
 
@@ -16,7 +24,14 @@ checkdep() {
 
 echo "### checking dependencies"
 which docker || { echo 'Executable not found: docker' ; exit 1; }
-which docker-compose || { echo 'Executable not found: docker-compose' ; exit 1; }
+if docker compose version >/dev/null 2>&1; then
+    echo "Using: docker compose (plugin)"
+elif command -v docker-compose >/dev/null 2>&1; then
+    echo "Using: docker-compose (standalone)"
+    docker-compose --version
+else
+    echo 'ERROR: Neither "docker compose" nor "docker-compose" found' ; exit 1
+fi
 which curl || { echo 'Executable not found: curl' ; exit 1; }
 which sed || { echo 'Executable not found: sed' ; exit 1; }
 }
@@ -39,7 +54,7 @@ build () {
                 echo -e "### cleaning old mysql data"
                 rm -rf ./data/mysql/*
                 echo -e "### building ./buildtarget/$buildtarget-$version.env \n"
-                $dc --env-file ./buildtest/$buildtarget-$version.env up -d --build
+                "${dc[@]}" --env-file ./buildtest/$buildtarget-$version.env up -d --build
                 # wait for mysql to initialize
                 sleep 30
                 # check definitions
@@ -51,7 +66,7 @@ build () {
                         if [ "$curlmysqli" -ne "1" ]; then
                                 echo -e "### ERROR: myqli database check failed expected string 'proper' not found \n"
                                 echo "### ...stopping container"
-                                $dc --env-file ./buildtest/$buildtarget-$version.env down
+                                "${dc[@]}" --env-file ./buildtest/$buildtarget-$version.env down
                                 exit
                         else
                                 echo -e "\n OK - mysqli database check successfull \n"
@@ -61,7 +76,7 @@ build () {
                         if [ "$curlpdo" -ne "1" ]; then
                                 echo -e "### ERROR: pdo database check failed expected string 'proper' not found \n"
                                 echo "### ...stopping container"
-                                $dc --env-file ./buildtest/$buildtarget-$version.env down
+                                "${dc[@]}" --env-file ./buildtest/$buildtarget-$version.env down
                                 exit
                         else
                                 echo -e "\n OK - pdo database check successfull \n"
@@ -69,7 +84,7 @@ build () {
                         fi
 
                 echo "### ... stopping container"
-                $dc --env-file ./buildtest/$buildtarget-$version.env down
+                "${dc[@]}" --env-file ./buildtest/$buildtarget-$version.env down
 }
 
 buildenvfile () {
