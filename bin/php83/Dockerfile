@@ -14,7 +14,7 @@ RUN apt-get -y update --fix-missing && \
 
 # Install useful tools and install important libaries
 RUN apt-get -y update && \
-    apt-get -y --no-install-recommends install nano wget \
+    apt-get -y --no-install-recommends install wget \
 dialog \
 libsqlite3-dev \
 libsqlite3-0 && \
@@ -41,8 +41,8 @@ RUN pecl install xdebug-3.3.1 && \
     mkdir /var/log/xdebug
 
 # Install redis
-RUN pecl install redis-6.0.2 && \
-    docker-php-ext-enable redis
+#RUN pecl install redis-6.0.2 && \
+#    docker-php-ext-enable redis
 
 # Install imagick
 RUN apt-get update && \
@@ -92,8 +92,10 @@ libpng-dev && \
 RUN apt-get -y update && \
     apt-get install ghostscript vim -y
 
-# Insure an SSL directory exists
-RUN mkdir -p /etc/apache2/ssl
+# Ensure an SSL directory exists and create logs folder
+RUN mkdir -p /etc/apache2/ssl && \
+    mkdir -p /var/www && \
+    mkdir -p -m 777 /var/www/logs
 
 # Enable SSL support
 RUN a2enmod ssl && a2enmod rewrite

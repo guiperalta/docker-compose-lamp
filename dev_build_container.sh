@@ -109,6 +109,26 @@ echo "### cleaning old env file"
 rm -rf ./buildtest/"$buildtarget"*
 }
 
+#cleantestimages function to clean up test images - NOT TEST UNTIL Jan 7, 2026
+cleantestimages () {
+
+echo "### cleaning test images"
+# Find and remove images associated with the buildtest project
+project_pattern="${buildtarget}-buildtest"
+# Get image IDs for images tagged with the project pattern
+image_ids=$(docker images --format "{{.ID}}" --filter "reference=*${project_pattern}*" 2>/dev/null | sort -u)
+
+if [ -n "$image_ids" ]; then
+    for img_id in $image_ids; do
+        echo "### removing image: $img_id"
+        docker rmi -f "$img_id" 2>/dev/null || true
+    done
+    echo "### test images cleanup completed"
+else
+    echo "### no test images found to clean"
+fi
+}
+
 while getopts ":b:" opt;
 do
         case "${opt}" in
@@ -153,5 +173,7 @@ else
         echo "Input not valid"
         usage
 fi
+
+cleantestimages
 
 exit
