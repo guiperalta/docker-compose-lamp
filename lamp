@@ -125,7 +125,7 @@ cmd_up() {
   fi
   ( load_project "$p" && fix_owner "lamp-$p" )
   lease arm
-  ( load_project "$p"; echo "$p up: http://localhost:$HTTP_PORT  https://localhost:$HTTPS_PORT  (pma http://localhost:$HOST_MACHINE_PMA_PORT)" )
+  ( load_project "$p"; echo "$p up: http://127.0.0.1:$HTTP_PORT  https://127.0.0.1:$HTTPS_PORT  (pma http://127.0.0.1:$HOST_MACHINE_PMA_PORT)" )
 }
 
 cmd_config() {
@@ -169,11 +169,11 @@ cmd_ls() {
   local p any=0
   for p in $(running_projects); do
     any=1
-    ( load_project "$p" 2>/dev/null; printf '%-14s http://localhost:%s  https://localhost:%s\n' "$p" "${HTTP_PORT:-?}" "${HTTPS_PORT:-?}" )
+    ( load_project "$p" 2>/dev/null; printf '%-14s http://127.0.0.1:%s  https://127.0.0.1:%s\n' "$p" "${HTTP_PORT:-?}" "${HTTPS_PORT:-?}" )
   done
   [ $any -eq 0 ] && echo "no projects running"
   if docker ps --format '{{.Names}}' | grep -qx 'lamp-phpmyadmin'; then
-    echo "shared: MySQL 127.0.0.1:3306, phpMyAdmin http://localhost:8080"
+    echo "shared: MySQL 127.0.0.1:3306, phpMyAdmin http://127.0.0.1:8080"
   else
     echo "shared: stopped"
   fi

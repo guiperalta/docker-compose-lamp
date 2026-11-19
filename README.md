@@ -41,7 +41,7 @@ lamp init           # first run on a new machine
 | lps-escrybe | `www-lps-escrybe` | 8082 | 8482 |
 | fazp | `www-fazp` | 8083 | 8483 |
 
-Shared: MySQL `127.0.0.1:3306` (one instance, one database per project), phpMyAdmin `http://localhost:8080` (user `root`, password from `.env`).
+Shared: MySQL `127.0.0.1:3306` (one instance, one database per project), phpMyAdmin `http://127.0.0.1:8080` (user `root`, password from `.env`).
 
 Caveat: browsers share cookies across `localhost` ports, so logins of two projects can overwrite each other. HTTPS uses a self-signed cert: the browser warns once.
 

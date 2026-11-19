@@ -11,7 +11,13 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 LAMP = REPO / "lamp"
 PROJECTS_DIR = REPO / "projects"
 REFRESH_SECONDS = 5
-PMA_URL = "http://localhost:8080"
+# 127.0.0.1, not the name localhost: Chrome upgrades localhost links opened from other apps to https,
+# which breaks our plain-HTTP ports (ERR_SSL_PROTOCOL_ERROR). IPs are never upgraded.
+PMA_URL = "http://127.0.0.1:8080"
+
+
+def project_url(port):
+    return f"http://127.0.0.1:{port}"
 
 
 # ---------- pure helpers (unit-tested in tests/topbar_test.py) ----------
@@ -105,7 +111,7 @@ def print_status():
     snap = snapshot()
     for p in load_projects():
         st = snap["states"].get(p["name"], "stopped")
-        print(f'{p["name"]:<14}{st:<10}{fmt_stats(snap["stats"].get("lamp-" + p["name"])):<26}http://localhost:{p["port"]}')
+        print(f'{p["name"]:<14}{st:<10}{fmt_stats(snap["stats"].get("lamp-" + p["name"])):<26}{project_url(p["port"])}')
     ms = [snap["stats"].get("lamp-mysql8"), snap["stats"].get("lamp-phpmyadmin")]
     print(f'{"shared":<14}{snap["shared"]:<10}{" | ".join(fmt_stats(x) for x in ms if x)}')
 
@@ -161,7 +167,7 @@ def main_gui():
             head = Gtk.MenuItem(label=n)
             sub = Gtk.Menu()
             w = {"head": head}
-            w["open"] = item("Open in browser", lambda n=n, p=p: open_url(f"http://localhost:{p['port']}"))
+            w["open"] = item("Open in browser", lambda n=n, p=p: open_url(project_url(p['port'])))
             w["start"] = item("Start", lambda n=n: do(n, "starting", [str(LAMP), "up", n]))
             w["pause"] = item("Pause", lambda n=n: do(n, "pausing", ["docker", "pause", f"lamp-{n}"]))
             w["resume"] = item("Resume", lambda n=n: do(n, "resuming", ["docker", "unpause", f"lamp-{n}"]))

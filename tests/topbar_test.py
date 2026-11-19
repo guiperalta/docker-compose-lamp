@@ -48,4 +48,10 @@ import re
 src = (root / "topbar" / "lamp_indicator.py").read_text()
 bad = [l.strip() for l in src.splitlines() if "GLib.idle_add(request_refresh" in l]
 check("no bare idle_add(request_refresh) (it returns True)", bad, [])
+
+# Chrome upgrades http://localhost links opened from other apps to https (SSL error on our plain-HTTP
+# ports). IP addresses are never upgraded, so the app must open 127.0.0.1.
+check("project_url uses 127.0.0.1", m.project_url("8081"), "http://127.0.0.1:8081")
+check("PMA_URL uses 127.0.0.1", m.PMA_URL, "http://127.0.0.1:8080")
+check("no http://localhost left in app", "http://localhost" in (root / "topbar" / "lamp_indicator.py").read_text(), False)
 sys.exit(1 if fails else 0)
