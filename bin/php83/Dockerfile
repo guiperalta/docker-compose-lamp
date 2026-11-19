@@ -103,5 +103,21 @@ RUN a2enmod ssl && a2enmod rewrite
 # Enable apache modules
 RUN a2enmod rewrite headers
 
+# Run Apache as the host user that owns the bind-mounted project folder.
+# By default www-data is uid 33, so anything the host creates under the mount with
+# mode 755 (upload folders, staged files) is read-only to PHP: uploads fail and
+# temp files are never cleaned up. Mapping www-data onto the host uid/gid makes
+# files written inside the container land with the right ownership instead.
+# Override per machine with:
+#   docker compose build --build-arg PUID=$(id -u) --build-arg PGID=$(id -g) webserver
+ARG PUID=1000
+ARG PGID=1000
+RUN groupmod -o -g "${PGID}" www-data && \
+    usermod -o -u "${PUID}" -g "${PGID}" www-data && \
+    for d in /var/www /var/log/apache2 /var/lock/apache2 /var/run/apache2; do \
+        [ -e "$d" ] && chown -R www-data:www-data "$d"; \
+    done; \
+    true
+
 # Cleanup
 RUN rm -rf /usr/src/*
