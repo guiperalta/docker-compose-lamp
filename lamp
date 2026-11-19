@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# lamp — start/stop LAMP projects in parallel. One shared MySQL, one web container per project.
+set -uo pipefail
+ROOT="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+cd "$ROOT" || exit 1
+LEASE=/home/peralta/.local/bin/dev-services-lease
+
+if docker compose version >/dev/null 2>&1; then
+  DC=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  DC=(docker-compose)
+else
+  echo "ERROR: neither 'docker compose' nor 'docker-compose' found" >&2; exit 1
+fi
+
+die() { echo "ERROR: $*" >&2; exit 1; }
+lease() { [ -x "$LEASE" ] && "$LEASE" "$1" || echo "warn: $LEASE not found, skipping lease $1" >&2; }
+
+list_projects() { for f in projects/*.env; do b=$(basename "$f" .env); echo "$b"; done; }
+
+valid_project() {
+  local p="${1:-}"
+  if [ -z "$p" ] || [ ! -f "projects/$p.env" ]; then
+    echo "ERROR: unknown project '${p}'. Valid projects:" >&2
+    list_projects | sed 's/^/  /' >&2
+    return 1
+  fi
+}
+
+# load PROJECT_* vars of project $1 into this shell (+ shared .env)
+load_project() {
+  set -a; . ./.env; . "projects/$1.env"; set +a
+  [ -d "$PROJECT_DIR" ] || die "project dir '$PROJECT_DIR' for '$1' does not exist"
+}
+
+dc_shared()  { "${DC[@]}" -p lamp-shared --env-file .env -f compose.shared.yml "$@"; }
+dc_project() { "${DC[@]}" -p "lamp-$1" --env-file .env --env-file "projects/$1.env" -f compose.project.yml "${@:2}"; }
+
+# names of running project web containers (without the lamp- prefix)
+running_projects() {
+  docker ps --filter label=com.docker.compose.service=webserver --format '{{.Names}}' \
+    | sed -n 's/^lamp-//p' | sort
+}
+
+shared_up()   { dc_shared up -d --build --wait; }
+shared_down() { dc_shared down; }
+
+cmd_up() {
+  valid_project "${1:-}" || exit 1
+  local p=$1
+  ( load_project "$p" ) || exit 1
+  lease cancel
+  shared_up || die "shared stack failed to start"
+  if ! dc_project "$p" up -d --build; then
+    [ -z "$(running_projects)" ] && shared_down
+    die "project '$p' failed to start"
+  fi
+  lease arm
+  ( load_project "$p"; echo "$p up: http://localhost:$HTTP_PORT  https://localhost:$HTTPS_PORT  (pma http://localhost:$HOST_MACHINE_PMA_PORT)" )
+}
+
+cmd_down() {
+  valid_project "${1:-}" || exit 1
+  dc_project "$1" down
+  [ -z "$(running_projects)" ] && shared_down
+  return 0
+}
+
+cmd_down_all() {
+  local p
+  for p in $(running_projects); do
+    valid_project "$p" 2>/dev/null && dc_project "$p" down
+  done
+  shared_down
+}
+
+cmd_ls() {
+  local p any=0
+  for p in $(running_projects); do
+    any=1
+    ( load_project "$p" 2>/dev/null; printf '%-14s http://localhost:%s  https://localhost:%s\n' "$p" "${HTTP_PORT:-?}" "${HTTPS_PORT:-?}" )
+  done
+  [ $any -eq 0 ] && echo "no projects running"
+  if docker ps --format '{{.Names}}' | grep -qx 'lamp-phpmyadmin'; then
+    echo "shared: MySQL 127.0.0.1:3306, phpMyAdmin http://localhost:8080"
+  else
+    echo "shared: stopped"
+  fi
+  return 0
+}
+
+usage() {
+  cat <<USAGE
+Usage: lamp <command> [project]
+  up <p>        start project (and shared MySQL if needed)
+  down <p>      stop project (stops MySQL when last project stops)
+  restart <p>   down + up
+  down-all      stop everything
+  ls            show running projects and URLs
+  logs <p> [-f] container logs
+  shell <p>     bash inside the project container
+Projects:
+$(list_projects | sed 's/^/  /')
+USAGE
+}
+
+case "${1:-help}" in
+  up)       shift; cmd_up "${1:-}" ;;
+  down)     shift; cmd_down "${1:-}" ;;
+  restart)  shift; cmd_down "${1:-}" && cmd_up "${1:-}" ;;
+  down-all) cmd_down_all ;;
+  ls)       cmd_ls ;;
+  logs)     shift; valid_project "${1:-}" || exit 1; p=$1; shift; docker logs "$@" "lamp-$p" ;;
+  shell)    shift; valid_project "${1:-}" || exit 1; docker exec -it "lamp-$1" bash ;;
+  help|-h|--help) usage ;;
+  *)        usage >&2; exit 1 ;;
+esac
