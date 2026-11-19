@@ -36,11 +36,24 @@ load_project() {
 dc_shared()  { "${DC[@]}" -p lamp-shared --env-file .env -f compose.shared.yml "$@"; }
 dc_project() { "${DC[@]}" -p "lamp-$1" --env-file .env --env-file "projects/$1.env" -f compose.project.yml "${@:2}"; }
 
-# names of running project web containers (without the lamp- prefix)
+# names of project web containers (without the lamp- prefix). $1=-a also counts created/exited.
+# Fails (non-zero) if docker is unreachable, so callers never mistake an error for "none running".
 running_projects() {
-  docker ps --filter label=com.docker.compose.service=webserver --format '{{.Names}}' \
-    | sed -n 's/^lamp-//p' | sort
+  local out
+  out=$(docker ps ${1:-} --filter label=com.docker.compose.service=webserver --format '{{.Names}}') || return 1
+  printf '%s\n' "$out" | sed -n 's/^lamp-//p' | sort
 }
+
+# stop shared stack only if docker answered AND no project container exists in any state
+shared_down_if_idle() {
+  local left
+  left=$(running_projects -a) || { echo "warn: cannot query docker, leaving shared stack up" >&2; return 0; }
+  [ -z "$left" ] && shared_down
+  return 0
+}
+
+# one mutating lamp command at a time (up/down race on shared stack)
+take_lock() { exec 9>"$ROOT/.lamp.lock"; flock 9; }
 
 shared_up()   { dc_shared up -d --build --wait; }
 shared_down() { dc_shared down; }
@@ -50,9 +63,13 @@ cmd_up() {
   local p=$1
   ( load_project "$p" ) || exit 1
   lease cancel
-  shared_up || die "shared stack failed to start"
+  if ! shared_up; then
+    shared_down_if_idle; [ -n "$(running_projects)" ] && lease arm
+    die "shared stack failed to start"
+  fi
   if ! dc_project "$p" up -d --build; then
-    [ -z "$(running_projects)" ] && shared_down
+    dc_project "$p" down >/dev/null 2>&1
+    shared_down_if_idle; [ -n "$(running_projects)" ] && lease arm
     die "project '$p' failed to start"
   fi
   lease arm
@@ -62,16 +79,16 @@ cmd_up() {
 cmd_down() {
   valid_project "${1:-}" || exit 1
   dc_project "$1" down
-  [ -z "$(running_projects)" ] && shared_down
-  return 0
+  shared_down_if_idle
 }
 
 cmd_down_all() {
-  local p
-  for p in $(running_projects); do
-    valid_project "$p" 2>/dev/null && dc_project "$p" down
+  local p all
+  all=$(running_projects -a) || die "cannot query docker"
+  for p in $all; do
+    if [ -f "projects/$p.env" ]; then dc_project "$p" down; else docker rm -f "lamp-$p" >/dev/null; fi
   done
-  shared_down
+  shared_down_if_idle
 }
 
 cmd_ls() {
@@ -103,6 +120,10 @@ Projects:
 $(list_projects | sed 's/^/  /')
 USAGE
 }
+
+case "${1:-help}" in
+  up|down|restart|down-all) take_lock ;;
+esac
 
 case "${1:-help}" in
   up)       shift; cmd_up "${1:-}" ;;
