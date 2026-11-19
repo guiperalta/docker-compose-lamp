@@ -40,5 +40,27 @@ echo "$cfg" | grep -q 'dockerfile: zz-pkg.Dockerfile' && ok "project Dockerfile 
 echo "$cfg" | grep -q 'image: lamp-zz-pkg:latest' && ok "project image tag" || bad "project image tag"
 rm -f projects/zz-pkg.env projects/zz-pkg.Dockerfile; rm -rf "$tmp2"
 
+# `lamp init` on a fresh checkout (copy of tracked files only): .env, ssl cert, data/log dirs
+fresh=$(mktemp -d)
+git ls-files -z | xargs -0 -I{} cp --parents {} "$fresh" 2>/dev/null
+( cd "$fresh" && ./lamp init >/dev/null 2>&1 ); rc=$?
+[ $rc -eq 0 ] && ok "init exits 0" || bad "init exits 0"
+[ -f "$fresh/.env" ] && ok "init creates .env" || bad "init creates .env"
+[ -f "$fresh/config/ssl/dev-selfsigned.crt" ] && [ -f "$fresh/config/ssl/dev-selfsigned.key" ] && ok "init creates ssl cert+key" || bad "init creates ssl cert+key"
+[ -d "$fresh/data/mysql" ] && [ -d "$fresh/logs/mysql" ] && ok "init creates data/log dirs" || bad "init creates data/log dirs"
+[ -f "$fresh/config/php/php.ini" ] && [ -d "$fresh/config/vhosts" ] && ok "tracked config present on fresh checkout" || bad "tracked config present on fresh checkout"
+sum1=$(sha256sum "$fresh/config/ssl/dev-selfsigned.crt")
+( cd "$fresh" && ./lamp init >/dev/null 2>&1 ) && [ "$sum1" = "$(sha256sum "$fresh/config/ssl/dev-selfsigned.crt")" ] && ok "init idempotent (cert kept)" || bad "init idempotent (cert kept)"
+# guard: php.ini missing or a directory must stop `lamp up` before docker can create a dir there
+for state in missing dir; do
+  fresh2=$(mktemp -d); git ls-files -z | xargs -0 -I{} cp --parents {} "$fresh2" 2>/dev/null
+  rm -f "$fresh2/config/php/php.ini"; [ $state = dir ] && mkdir "$fresh2/config/php/php.ini"
+  err=$(cd "$fresh2" && ./lamp up escrybe 2>&1 >/dev/null); rc=$?
+  [ $rc -ne 0 ] && echo "$err" | grep -q 'php.ini' && ok "up refuses when php.ini is $state" || bad "up refuses when php.ini is $state"
+  [ ! -d "$fresh2/config/php/php.ini" ] || [ $state = dir ] || bad "php.ini dir not created ($state)"
+  rm -rf "$fresh2"
+done
+rm -rf "$fresh"
+
 ./lamp ls >/dev/null 2>&1 && ok "ls exits 0" || bad "ls exits 0"
 exit $fail

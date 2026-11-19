@@ -98,7 +98,17 @@ take_lock() { exec 9>"$ROOT/.lamp.lock"; flock 9; }
 shared_up()   { dc_shared up -d --build --wait; }
 shared_down() { dc_shared down; }
 
+# docker turns a missing bind-mount source into an empty DIRECTORY, silently dropping php.ini.
+# Refuse to start unless the shared config files really are files.
+check_config() {
+  local f
+  for f in config/php/php.ini; do
+    [ -f "$f" ] || die "$f is missing or not a file (docker would create a directory there). Fix: rmdir $f 2>/dev/null; git checkout $f"
+  done
+}
+
 cmd_up() {
+  check_config
   valid_project "${1:-}" || exit 1
   local p=$1
   ( load_project "$p" && prepare_dirs ) || exit 1
@@ -122,6 +132,17 @@ cmd_config() {
   valid_project "${1:-}" || exit 1
   ( load_project "$1" ) || exit 1
   dc_project "$1" config
+}
+
+# security updates: re-pull the floating php:<ver>-apache tag (newest patch), rebuild, restart project
+cmd_rebuild() {
+  valid_project "${1:-}" || exit 1
+  local php
+  ( load_project "$1" ) || exit 1
+  php=$(sed -n 's/^PHPVERSION=//p' "projects/$1.env" | tr -d '"')
+  [ -d "bin/$php" ] || die "no bin/$php (PHPVERSION in projects/$1.env)"
+  docker build --pull -t "lamp-web:$php" "./bin/$php" || die "base rebuild failed"
+  cmd_up "$1"
 }
 
 cmd_prep() {
@@ -159,6 +180,38 @@ cmd_ls() {
   return 0
 }
 
+# first-run setup on a new machine: .env, ssl cert, data/log dirs, sanity checks
+cmd_init() {
+  local miss=0 p
+  command -v docker >/dev/null || { echo "MISSING: docker"; miss=1; }
+  "${DC[@]}" version >/dev/null 2>&1 || { echo "MISSING: docker compose"; miss=1; }
+  for b in flock openssl; do command -v "$b" >/dev/null || { echo "MISSING: $b"; miss=1; }; done
+  [ $miss -eq 0 ] || exit 1
+
+  [ -f .env ] || { cp sample.env .env && echo "created .env from sample.env (edit passwords if needed)"; }
+  mkdir -p data/mysql logs/mysql
+
+  if [ -e config/php/php.ini ] && [ ! -f config/php/php.ini ]; then
+    echo "WARN: config/php/php.ini is a directory (docker made it). Remove it: rmdir config/php/php.ini, then git checkout config/php/php.ini"
+  fi
+
+  if [ ! -f config/ssl/dev-selfsigned.crt ] || [ ! -f config/ssl/dev-selfsigned.key ]; then
+    mkdir -p config/ssl
+    openssl req -x509 -nodes -newkey rsa:2048 -days 825 -subj "/CN=localhost" \
+      -addext "subjectAltName=DNS:localhost,DNS:*.localhost,IP:127.0.0.1" \
+      -keyout config/ssl/dev-selfsigned.key -out config/ssl/dev-selfsigned.crt >/dev/null 2>&1 \
+      || die "openssl failed to create the dev certificate"
+    chmod 600 config/ssl/dev-selfsigned.key
+    echo "created self-signed dev cert in config/ssl/"
+  fi
+
+  for p in $(list_projects); do
+    ( set -a; . "projects/$p.env"; set +a
+      [ -d "$PROJECT_DIR" ] && echo "ok       $p -> $PROJECT_DIR" || echo "MISSING  $p -> $PROJECT_DIR (clone/copy the project here)" )
+  done
+  echo "init done. Next: lamp up <project>"
+}
+
 usage() {
   cat <<USAGE
 Usage: lamp <command> [project]
@@ -168,6 +221,8 @@ Usage: lamp <command> [project]
   down-all      stop everything
   prep <p>      create project's WRITABLE_DIRS only (up does this too)
   config <p>    show resolved compose config (debug)
+  init          first run on a new machine (.env, ssl cert, dirs, checks)
+  rebuild <p>   pull newest PHP patch release and rebuild (security updates), then up
   ls            show running projects and URLs
   logs <p> [-f] container logs
   shell <p>     bash inside the project container
@@ -177,7 +232,7 @@ USAGE
 }
 
 case "${1:-help}" in
-  up|down|restart|down-all) take_lock ;;
+  up|down|restart|down-all|rebuild) take_lock ;;
 esac
 
 case "${1:-help}" in
@@ -185,6 +240,8 @@ case "${1:-help}" in
   down)     shift; cmd_down "${1:-}" ;;
   restart)  shift; cmd_down "${1:-}" && cmd_up "${1:-}" ;;
   down-all) cmd_down_all ;;
+  init)     cmd_init ;;
+  rebuild)  shift; cmd_rebuild "${1:-}" ;;
   config)   shift; cmd_config "${1:-}" ;;
   prep)     shift; cmd_prep "${1:-}" ;;
   ls)       cmd_ls ;;

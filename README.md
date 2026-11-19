@@ -1,43 +1,39 @@
-# LAMP stack built with Docker Compose
+# LAMP stack for local development (multi-project)
 
-![Landing Page](https://user-images.githubusercontent.com/43859895/141092846-905eae39-0169-4fd7-911f-9ff32c48b7e8.png)
+Docker LAMP stack, built to run **several projects in parallel** from one repo. One command per project. Same image, only the folder changes. For local development only, not production.
 
-A basic LAMP stack environment built using Docker Compose. It consists of the following:
+- **Apache + PHP** (one container per project)
+- **MySQL 8 + phpMyAdmin** (one shared instance, started and stopped automatically)
+- PHP versions: **8.1, 8.2, 8.3, 8.4, 8.5, 8.6** (`php81` ... `php86`)
 
-- PHP
-- Apache
-- MySQL
-- phpMyAdmin
-- Redis
+> **Security:** the images use the floating `php:<version>-apache-bookworm` tags, so a rebuild picks up the newest patch release. Run `lamp rebuild <project>` regularly. PHP 8.1 is end-of-life upstream (no more fixes): use 8.2+ for anything that matters.
 
-As of now, we have several different PHP versions. Use appropriate php version as needed:
+## New machine: setup
 
-- 5.4.x
-- 5.6.x
-- 7.1.x
-- 7.2.x
-- 7.3.x
-- 7.4.x
-- 8.0.x
-- 8.1.x
-- 8.2.x
-- 8.3.x
+1. Install Docker with the compose plugin. Add your user to the `docker` group. Needs `openssl` and `flock` (util-linux).
+2. `git clone https://github.com/guiperalta/docker-compose-lamp && cd docker-compose-lamp`
+3. `ln -sf "$PWD/lamp" ~/.local/bin/lamp` (puts `lamp` on your PATH)
+4. `lamp init` creates `.env` from `sample.env`, the self-signed SSL cert, the `data/` and `logs/` dirs, and tells you which project folders are missing.
+5. Put each project folder next to this repo with the name in `projects/<name>.env` (`www-escrybe`, `www-fazp`, `www-lps-escrybe`). They are separate from this repo.
+6. Database: empty on a new machine. To keep old data, `mysqldump` on the old machine and import through phpMyAdmin, or copy `data/mysql`.
+7. `lamp up escrybe`
 
-## Multi-project usage (`lamp`)
+Ports that must be free: 3306, 8080, 8443 and each project's ports below. If your uid is not 1000, build with `--build-arg PUID=$(id -u) --build-arg PGID=$(id -g)` (see `bin/php83/Dockerfile`).
 
-Run several projects at once from this one stack. Same image, only the folder changes.
+## Daily use
 
 ```bash
 lamp up fazp        # start project (starts shared MySQL + phpMyAdmin if needed)
 lamp down fazp      # stop project (MySQL stops when the last project stops)
 lamp restart fazp
+lamp rebuild fazp   # pull newest PHP patch release (security fixes), rebuild, start
 lamp ls             # running projects + URLs
 lamp logs fazp -f
 lamp shell fazp
 lamp down-all
+lamp config fazp    # resolved compose config (debug)
+lamp init           # first run on a new machine
 ```
-
-`ln -sf "$PWD/lamp" ~/.local/bin/lamp` puts it on your PATH.
 
 | Project | Folder | HTTP | HTTPS |
 |---|---|---|---|
@@ -45,175 +41,46 @@ lamp down-all
 | lps-escrybe | `www-lps-escrybe` | 8082 | 8482 |
 | fazp | `www-fazp` | 8083 | 8483 |
 
-Shared: MySQL `127.0.0.1:3306` (one instance, one database per project), phpMyAdmin `http://localhost:8080`.
+Shared: MySQL `127.0.0.1:3306` (one instance, one database per project), phpMyAdmin `http://localhost:8080` (user `root`, password from `.env`).
 
-Per-project setup: optional `WRITABLE_DIRS="dir1 dir2"` in the project file (paths relative to the project folder). `lamp up` creates them before the container starts. escrybe uses it for `temp_not_auto_delete`.
+Caveat: browsers share cookies across `localhost` ports, so logins of two projects can overwrite each other. HTTPS uses a self-signed cert: the browser warns once.
 
-Per-project packages: drop `projects/<name>.Dockerfile` next to the env file. It layers on the base image, e.g.
+## Per-project setup
+
+Each project has `projects/<name>.env`:
+
+| Variable | Meaning |
+|---|---|
+| `PROJECT_NAME` | name, container is `lamp-<name>` |
+| `PROJECT_DIR` | project folder (mounted at `/var/www/html`) |
+| `PHPVERSION` | `php81` ... `php86` |
+| `HTTP_PORT`, `HTTPS_PORT` | host ports |
+| `WRITABLE_DIRS` | optional, e.g. `"temp_not_auto_delete"`. Created and made writable by `lamp up` |
+
+**Extra packages:** drop `projects/<name>.Dockerfile` next to the env file. It layers on the base image, e.g.
 
 ```dockerfile
 FROM lamp-web:php83
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg imagemagick && rm -rf /var/lib/apt/lists/*
 ```
 
-`lamp up <name>` builds it (cached) as `lamp-<name>:latest`. No file = base image. Delete the file to go back. `lamp config <name>` shows the resolved compose config.
+`lamp up <name>` builds it (cached) as `lamp-<name>:latest`. No file = base image. escrybe has one (ghostscript, weasyprint). Use the same `FROM lamp-web:<your PHPVERSION>` as the project.
 
-Add a project: create `projects/<name>.env` with `PROJECT_NAME`, `PROJECT_DIR`, `PHPVERSION`, `HTTP_PORT`, `HTTPS_PORT`. No YAML edits.
+**Add a project:** create `projects/<name>.env`. No YAML edits.
 
-Caveat: browsers share cookies across `localhost` ports, so logins of two projects can overwrite each other.
+## Layout
 
-Files: `compose.shared.yml` (MySQL + phpMyAdmin), `compose.project.yml` (web container). `dev_build_container.sh` targets the old single `docker-compose.yml` and no longer works until updated. Old `docker compose up -d` instructions below are obsolete.
+- `lamp`: the CLI. `compose.shared.yml` (MySQL + phpMyAdmin), `compose.project.yml` (web container).
+- `config/`: `vhosts/` (Apache), `php/php.ini` (shared PHP settings), `initdb/` (SQL run on first MySQL start), `ssl/` (generated by `lamp init`, not in git).
+- `bin/php81..php86`, `bin/mysql8`, ...: Dockerfiles. `tests/lamp_test.sh`: `bash tests/lamp_test.sh`.
+- `dev_build_container.sh` targets the old single-compose layout and does not work until updated.
+- Apache vhost `config/vhosts` is shared by all projects (it has a rewrite for tracking URLs that points to escrybe's `/pages/errors/tracking-url.php`).
 
-## Installation
+## Settings
 
-- Clone this repository on your local computer
-- configure .env as needed
-- Run the `docker compose up -d`.
+`.env` holds shared values (DB credentials, phpMyAdmin ports, paths). `sample.env` documents them. Default MySQL root password is `tiger`: change it if the machine is shared.
 
-```shell
-git clone https://github.com/sprintcube/docker-compose-lamp.git
-cd docker-compose-lamp/
-cp sample.env .env
-// modify sample.env as needed
-docker compose up -d
-// visit localhost
-```
-
-Your LAMP stack is now ready!! You can access it via `http://localhost`.
-
-## Configuration and Usage
-
-### General Information
-
-This Docker Stack is build for local development and not for production usage.
-
-### Configuration
-
-This package comes with default configuration options. You can modify them by creating `.env` file in your root directory.
-To make it easy, just copy the content from `sample.env` file and update the environment variable values as per your need.
-
-### Configuration Variables
-
-There are following configuration variables available and you can customize them by overwritting in your own `.env` file.
-
----
-
-#### PHP
-
----
-
-_**PHPVERSION**_
-Is used to specify which PHP Version you want to use. Defaults always to latest PHP Version.
-
-_**PHP_INI**_
-Define your custom `php.ini` modification to meet your requirments.
-
----
-
-#### Apache
-
----
-
-_**DOCUMENT_ROOT**_
-
-It is a document root for Apache server. The default value for this is `./www`. All your sites will go here and will be synced automatically.
-
-_**APACHE_DOCUMENT_ROOT**_
-
-Apache config file value. The default value for this is /var/www/html.
-
-_**VHOSTS_DIR**_
-
-This is for virtual hosts. The default value for this is `./config/vhosts`. You can place your virtual hosts conf files here.
-
-> Make sure you add an entry to your system's `hosts` file for each virtual host.
-
-_**APACHE_LOG_DIR**_
-
-This will be used to store Apache logs. The default value for this is `./logs/apache2`.
-
----
-
-#### Database
-
----
-
-> For Apple Silicon Users:
-> Please select Mariadb as Database. Oracle doesn't build their SQL Containers for the arm Architecture
-
-_**DATABASE**_
-
-Define which MySQL or MariaDB Version you would like to use.
-
-_**MYSQL_INITDB_DIR**_
-
-When a container is started for the first time files in this directory with the extensions `.sh`, `.sql`, `.sql.gz` and
-`.sql.xz` will be executed in alphabetical order. `.sh` files without file execute permission are sourced rather than executed.
-The default value for this is `./config/initdb`.
-
-_**MYSQL_DATA_DIR**_
-
-This is MySQL data directory. The default value for this is `./data/mysql`. All your MySQL data files will be stored here.
-
-_**MYSQL_LOG_DIR**_
-
-This will be used to store Apache logs. The default value for this is `./logs/mysql`.
-
-## Web Server
-
-Apache is configured to run on port 80. So, you can access it via `http://localhost`.
-
-#### Apache Modules
-
-By default following modules are enabled.
-
-- rewrite
-- headers
-
-> If you want to enable more modules, just update `./bin/phpX/Dockerfile`. You can also generate a PR and we will merge if seems good for general purpose.
-> You have to rebuild the docker image by running `docker compose build` and restart the docker containers.
-
-#### Connect via SSH
-
-You can connect to web server using `docker compose exec` command to perform various operation on it. Use below command to login to container via ssh.
-
-```shell
-docker compose exec webserver bash
-```
-
-## PHP
-
-The installed version of php depends on your `.env`file.
-
-#### Extensions
-
-By default following extensions are installed.
-May differ for PHP Versions <7.x.x
-
-- mysqli
-- pdo_sqlite
-- pdo_mysql
-- mbstring
-- zip
-- intl
-- mcrypt
-- curl
-- json
-- iconv
-- xml
-- xmlrpc
-- gd
-
-> If you want to install more extension, just update `./bin/webserver/Dockerfile`. You can also generate a PR and we will merge if it seems good for general purpose.
-> You have to rebuild the docker image by running `docker compose build` and restart the docker containers.
-
-## phpMyAdmin
-
-phpMyAdmin is configured to run on port 8080. Use following default credentials.
-
-http://localhost:8080/  
-username: root  
-password: tiger
+PHP extensions installed: mysqli, pdo_mysql, pdo_sqlite, mbstring, zip, intl, curl, xml, gd, imagick, xdebug (see the Dockerfiles). To add one for a single project, use the per-project Dockerfile. To add one for all, edit `bin/phpXX/Dockerfile` and run `lamp rebuild <project>`.
 
 ## Xdebug
 
@@ -225,7 +92,7 @@ PHP <= 7.3: Xdebug 2.X.X
 
 PHP >= 7.4: Xdebug 3.X.X
 
-To use Xdebug you need to enable the settings in the `./config/php/php.ini` file according to the chosen version PHP.
+To use Xdebug you need to enable the settings in the ``config/php/php.ini` (shared) ` file according to the chosen version PHP.
 
 Example:
 
@@ -274,64 +141,6 @@ Now, make a breakpoint and run debug.
 
 **Tip!** After theses configurations, you may need to restart container.
 
-## Redis
-
-It comes with Redis. It runs on default port `6379`.
-
-## SSL (HTTPS)
-
-Support for `https` domains is built-in but disabled by default. There are 3 ways you can enable and configure SSL; `https` on `localhost` being the easiest. If you are trying to recreating a testing environment as close as possible to a production environment, any domain name can be supported with more configuration.
-
-**Notice:** For every non-localhost domain name you wish to use `https` on, you will need to modify your computers [hosts file](https://en.wikipedia.org/wiki/Hosts_%28file%29) and point the domain name to `127.0.0.1`. If you fail to do this SSL will not work and you will be routed to the internet every time you try to visit that domain name locally.
-
-### 1) HTTPS on Localhost
-
-To enable `https` on `localhost` (https://localhost) you will need to:
-
-1. Use a tool like [mkcert](https://github.com/FiloSottile/mkcert#installation) to create an SSL certificate for `localhost`:
-   - With `mkcert`, in the terminal run `mkcert localhost 127.0.0.1 ::1`.
-   - Rename the files that were generated `cert.pem` and `cert-key.pem` respectively.
-   - Move these files into your docker setup by placing them in `config/ssl` directory.
-2. Uncomment the `443` vhost in `config/vhosts/default.conf`.
-
-Done. Now any time you turn on your LAMP container `https` will work on `localhost`.
-
-### 2) HTTPS on many Domains with a Single Certificate
-
-If you would like to use normal domain names for local testing, and need `https` support, the simplest solution is an SSL certificate that covers all the domain names:
-
-1. Use a tool like [mkcert](https://github.com/FiloSottile/mkcert#installation) to create an SSL certificate that covers all the domain names you want:
-   - With `mkcert`, in the terminal run `mkcert example.com "*.example.org" myapp.dev localhost 127.0.0.1 ::1` where you replace all the domain names and IP addresses to the ones you wish to support.
-   - Rename the files that were generated `cert.pem` and `cert-key.pem` respectively.
-   - Move these files into your docker setup by placing them in `config/ssl` directory.
-2. Uncomment the `443` vhost in `config/vhosts/default.conf`.
-
-Done. Since you combined all the domain names into a single certificate, the vhost file will support your setup without needing to modify it further. You could add domain specific rules if you wish however. Now any time you turn on your LAMP container `https` will work on all the domains you specified.
-
-### 3) HTTPS on many Domain with Multiple Certificates
-
-If you would like your local testing environment to exactly match your production, and need `https` support, you could create an SSL certificate for every domain you wish to support:
-
-1. Use a tool like [mkcert](https://github.com/FiloSottile/mkcert#installation) to create an SSL certificate that covers the domain name you want:
-   - With `mkcert`, in the terminal run `mkcert [your-domain-name(s)-here]` replacing the bracket part with your domain name.
-   - Rename the files that were generated to something unique like `[name]-cert.pem` and `[name]-cert-key.pem` replacing the bracket part with a unique name.
-   - Move these files into your docker setup by placing them in `config/ssl` directory.
-2. Using the `443` example from the vhost file (`config/vhosts/default.conf`), make new rules that match your domain name and certificate file names.
-
-Done. The LAMP container will auto pull in any SSL certificates in `config/ssl` when it starts. As long as you configure the vhosts file correctly and place the SSL certificates in `config/ssl`, any time you turn on your LAMP container `https` will work on your specified domains.
-
-## Contributing
-
-We are happy if you want to create a pull request or help people with their issues. If you want to create a PR, please remember that this stack is not built for production usage, and changes should be good for general purpose and not overspecialized.
-
-> Please note that we simplified the project structure from several branches for each php version, to one centralized master branch. Please create your PR against master branch.
->
-> Thank you!
-
 ## Why you shouldn't use this stack unmodified in production
 
-We want to empower developers to quickly create creative Applications. Therefore we are providing an easy to set up a local development environment for several different Frameworks and PHP Versions.
-In Production you should modify at a minimum the following subjects:
-
-- php handler: mod_php=> php-fpm
-- secure mysql users with proper source IP limitations
+In production at a minimum: php-fpm instead of mod_php, restricted MySQL users, no phpMyAdmin, real certificates, and no dev tools (xdebug).
