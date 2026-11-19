@@ -23,6 +23,36 @@ As of now, we have several different PHP versions. Use appropriate php version a
 - 8.2.x
 - 8.3.x
 
+## Multi-project usage (`lamp`)
+
+Run several projects at once from this one stack. Same image, only the folder changes.
+
+```bash
+lamp up fazp        # start project (starts shared MySQL + phpMyAdmin if needed)
+lamp down fazp      # stop project (MySQL stops when the last project stops)
+lamp restart fazp
+lamp ls             # running projects + URLs
+lamp logs fazp -f
+lamp shell fazp
+lamp down-all
+```
+
+`ln -sf "$PWD/lamp" ~/.local/bin/lamp` puts it on your PATH.
+
+| Project | Folder | HTTP | HTTPS |
+|---|---|---|---|
+| escrybe | `www-escrybe` | 8081 | 8481 |
+| lps-escrybe | `www-lps-escrybe` | 8082 | 8482 |
+| fazp | `www-fazp` | 8083 | 8483 |
+
+Shared: MySQL `127.0.0.1:3306` (one instance, one database per project), phpMyAdmin `http://localhost:8080`.
+
+Add a project: create `projects/<name>.env` with `PROJECT_NAME`, `PROJECT_DIR`, `PHPVERSION`, `HTTP_PORT`, `HTTPS_PORT`. No YAML edits.
+
+Caveat: browsers share cookies across `localhost` ports, so logins of two projects can overwrite each other.
+
+Files: `compose.shared.yml` (MySQL + phpMyAdmin), `compose.project.yml` (web container). `dev_build_container.sh` targets the old single `docker-compose.yml` and no longer works until updated. Old `docker compose up -d` instructions below are obsolete.
+
 ## Installation
 
 - Clone this repository on your local computer
