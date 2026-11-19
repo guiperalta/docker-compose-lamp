@@ -29,5 +29,16 @@ printf 'PROJECT_NAME=zz-prep\nPROJECT_DIR=%s\nPHPVERSION=php83\nHTTP_PORT=8997\n
 ./lamp prep zz-prep >/dev/null 2>&1 && ok "prep idempotent" || bad "prep idempotent"
 rm -f projects/zz-prep.env; rm -rf "$tmp"
 
+# per-project Dockerfile layer: `lamp config` shows resolved compose config
+mkdir -p "$tmp2" 2>/dev/null; tmp2=$(mktemp -d)
+printf 'PROJECT_NAME=zz-pkg\nPROJECT_DIR=%s\nPHPVERSION=php83\nHTTP_PORT=8995\nHTTPS_PORT=8994\n' "$tmp2" > projects/zz-pkg.env
+cfg=$(./lamp config zz-pkg 2>&1)
+echo "$cfg" | grep -q 'image: lamp-web:php83' && ok "no project Dockerfile -> base image" || bad "no project Dockerfile -> base image"
+printf 'ARG PHPVERSION\nFROM lamp-web:php83\nRUN true\n' > projects/zz-pkg.Dockerfile
+cfg=$(./lamp config zz-pkg 2>&1)
+echo "$cfg" | grep -q 'dockerfile: zz-pkg.Dockerfile' && ok "project Dockerfile used" || bad "project Dockerfile used"
+echo "$cfg" | grep -q 'image: lamp-zz-pkg:latest' && ok "project image tag" || bad "project image tag"
+rm -f projects/zz-pkg.env projects/zz-pkg.Dockerfile; rm -rf "$tmp2"
+
 ./lamp ls >/dev/null 2>&1 && ok "ls exits 0" || bad "ls exits 0"
 exit $fail

@@ -1,9 +1,11 @@
+# BUILD_CONTEXT / BUILD_DOCKERFILE / WEB_IMAGE are set by ./lamp (base image or projects/<name>.Dockerfile layer)
 # One web container per project. Managed by ./lamp (needs PROJECT_* vars from projects/<name>.env)
 services:
   webserver:
     build:
-      context: ./bin/${PHPVERSION}
-    image: "lamp-web:${PHPVERSION}"
+      context: ${BUILD_CONTEXT}
+      dockerfile: ${BUILD_DOCKERFILE}
+    image: "${WEB_IMAGE}"
     container_name: "lamp-${PROJECT_NAME}"
     restart: "no"
     ports:

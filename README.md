@@ -49,6 +49,15 @@ Shared: MySQL `127.0.0.1:3306` (one instance, one database per project), phpMyAd
 
 Per-project setup: optional `WRITABLE_DIRS="dir1 dir2"` in the project file (paths relative to the project folder). `lamp up` creates them before the container starts. escrybe uses it for `temp_not_auto_delete`.
 
+Per-project packages: drop `projects/<name>.Dockerfile` next to the env file. It layers on the base image, e.g.
+
+```dockerfile
+FROM lamp-web:php83
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg imagemagick && rm -rf /var/lib/apt/lists/*
+```
+
+`lamp up <name>` builds it (cached) as `lamp-<name>:latest`. No file = base image. Delete the file to go back. `lamp config <name>` shows the resolved compose config.
+
 Add a project: create `projects/<name>.env` with `PROJECT_NAME`, `PROJECT_DIR`, `PHPVERSION`, `HTTP_PORT`, `HTTPS_PORT`. No YAML edits.
 
 Caveat: browsers share cookies across `localhost` ports, so logins of two projects can overwrite each other.

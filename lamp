@@ -53,7 +53,28 @@ fix_owner() {
 }
 
 dc_shared()  { "${DC[@]}" -p lamp-shared --env-file .env -f compose.shared.yml "$@"; }
-dc_project() { "${DC[@]}" -p "lamp-$1" --env-file .env --env-file "projects/$1.env" -f compose.project.yml "${@:2}"; }
+# Image choice: base lamp-web:<php> from bin/<php>; if projects/<name>.Dockerfile exists, a layer
+# on top of the base (extra apt packages, php extensions...) tagged lamp-<name>:latest.
+web_image_env() {
+  local p=$1 php
+  php=$(sed -n 's/^PHPVERSION=//p' "projects/$p.env" | tr -d '"')
+  if [ -f "projects/$p.Dockerfile" ]; then
+    export BUILD_CONTEXT=./projects BUILD_DOCKERFILE="$p.Dockerfile" WEB_IMAGE="lamp-$p:latest"
+  else
+    export BUILD_CONTEXT="./bin/$php" BUILD_DOCKERFILE=Dockerfile WEB_IMAGE="lamp-web:$php"
+  fi
+}
+
+# project layers start FROM the base image, so make sure it exists/is current (cached = fast)
+build_base() {
+  local php
+  php=$(sed -n 's/^PHPVERSION=//p' "projects/$1.env" | tr -d '"')
+  if [ -f "projects/$1.Dockerfile" ]; then
+    docker build -q -t "lamp-web:$php" "./bin/$php" >/dev/null
+  fi
+}
+
+dc_project() { web_image_env "$1"; "${DC[@]}" -p "lamp-$1" --env-file .env --env-file "projects/$1.env" -f compose.project.yml "${@:2}"; }
 
 # names of project web containers (without the lamp- prefix). $1=-a also counts created/exited.
 # Fails (non-zero) if docker is unreachable, so callers never mistake an error for "none running".
@@ -86,6 +107,7 @@ cmd_up() {
     shared_down_if_idle; [ -n "$(running_projects)" ] && lease arm
     die "shared stack failed to start"
   fi
+  build_base "$p" || { shared_down_if_idle; die "base image build failed"; }
   if ! dc_project "$p" up -d --build; then
     dc_project "$p" down >/dev/null 2>&1
     shared_down_if_idle; [ -n "$(running_projects)" ] && lease arm
@@ -94,6 +116,12 @@ cmd_up() {
   ( load_project "$p" && fix_owner "lamp-$p" )
   lease arm
   ( load_project "$p"; echo "$p up: http://localhost:$HTTP_PORT  https://localhost:$HTTPS_PORT  (pma http://localhost:$HOST_MACHINE_PMA_PORT)" )
+}
+
+cmd_config() {
+  valid_project "${1:-}" || exit 1
+  ( load_project "$1" ) || exit 1
+  dc_project "$1" config
 }
 
 cmd_prep() {
@@ -139,6 +167,7 @@ Usage: lamp <command> [project]
   restart <p>   down + up
   down-all      stop everything
   prep <p>      create project's WRITABLE_DIRS only (up does this too)
+  config <p>    show resolved compose config (debug)
   ls            show running projects and URLs
   logs <p> [-f] container logs
   shell <p>     bash inside the project container
@@ -156,6 +185,7 @@ case "${1:-help}" in
   down)     shift; cmd_down "${1:-}" ;;
   restart)  shift; cmd_down "${1:-}" && cmd_up "${1:-}" ;;
   down-all) cmd_down_all ;;
+  config)   shift; cmd_config "${1:-}" ;;
   prep)     shift; cmd_prep "${1:-}" ;;
   ls)       cmd_ls ;;
   logs)     shift; valid_project "${1:-}" || exit 1; p=$1; shift; docker logs "$@" "lamp-$p" ;;
