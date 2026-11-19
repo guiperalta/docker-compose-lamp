@@ -101,6 +101,130 @@ def shared_state(running_names):
 
 
 # ---------- docker access ----------
+ICON = {"running": "●", "paused": "⏸", "stopped": "○"}
+
+
+def action_flags(st, busy):
+    """Which buttons are enabled for a project in state st (running/paused/stopped); busy = verb or None."""
+    idle = not busy
+    return {
+        "open": st == "running" and idle,
+        "start": st == "stopped" and idle,
+        "pause": st == "running" and idle,
+        "resume": st == "paused" and idle,
+        "restart": st in ("running", "paused") and idle,
+        "stop": st in ("running", "paused") and idle,
+    }
+
+
+def status_label(name, st, stats, busy):
+    if busy:
+        return f"⏳ {name} — {busy}…"
+    return f"{ICON.get(st, '○')} {name}   {stats}".rstrip()
+
+
+class Panel:
+    """Small always-on-top control window. Stays open after Start/Stop/Pause/Restart/Stop all;
+    only the "Open in browser" buttons close it (also Esc / the window X).
+    Gtk and the action callbacks are injected so it can be tested under a virtual display."""
+
+    def __init__(self, Gtk, projects, actions):
+        self.Gtk, self.actions = Gtk, actions
+        self.rows, self.names = {}, None
+        w = self.window = Gtk.Window(title="LAMP projects")
+        w.set_keep_above(True)
+        w.set_resizable(False)
+        w.set_border_width(12)
+        w.set_position(Gtk.WindowPosition.MOUSE)
+        w.connect("delete-event", lambda win, ev: win.hide_on_delete())
+        w.connect("key-press-event", self._on_key)
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        w.add(self.box)
+        self._build(projects)
+
+    def _on_key(self, win, event):
+        if event.keyval == 0xFF1B:  # GDK_KEY_Escape
+            win.hide()
+            return True
+        return False
+
+    def _button(self, label, cb):
+        b = self.Gtk.Button(label=label)
+        b.connect("clicked", lambda *_: cb())
+        return b
+
+    def _build(self, projects):
+        Gtk = self.Gtk
+        for c in self.box.get_children():
+            self.box.remove(c)
+        self.rows = {}
+        for p in projects:
+            n, port = p["name"], p["port"]
+            row = Gtk.Box(spacing=6)
+            label = Gtk.Label(xalign=0)
+            label.set_width_chars(38)
+            row.pack_start(label, True, True, 0)
+            r = {"label": label, "st": "stopped"}
+            r["open"] = self._button("Open in browser", lambda n=n, port=port: self._open(project_url(port)))
+            r["start"] = self._button("Start", lambda n=n: self.actions.do(n, "starting", [str(LAMP), "up", n]))
+            r["toggle"] = self._button("Pause", lambda n=n: self._toggle(n))
+            r["restart"] = self._button("Restart", lambda n=n: self.actions.do(n, "restarting", [str(LAMP), "restart", n]))
+            r["stop"] = self._button("Stop", lambda n=n: self.actions.do(n, "stopping", [str(LAMP), "down", n]))
+            for k in ("open", "start", "toggle", "restart", "stop"):
+                row.pack_start(r[k], False, False, 0)
+            self.box.pack_start(row, False, False, 0)
+            self.rows[n] = r
+        self.box.pack_start(Gtk.Separator(), False, False, 2)
+        srow = Gtk.Box(spacing=6)
+        self.shared_label = Gtk.Label(xalign=0)
+        self.shared_label.set_width_chars(38)
+        srow.pack_start(self.shared_label, True, True, 0)
+        srow.pack_start(self._button("Open phpMyAdmin", lambda: self._open(pma_url())), False, False, 0)
+        self.stop_all = self._button("Stop all", lambda: self.actions.do("_all", "stopping all", [str(LAMP), "down-all"]))
+        srow.pack_start(self.stop_all, False, False, 0)
+        self.box.pack_start(srow, False, False, 0)
+        self.names = [p["name"] for p in projects]
+        self.box.show_all()
+
+    def _open(self, url):
+        self.actions.open_url(url)
+        self.window.hide()
+
+    def _toggle(self, n):
+        if self.rows[n]["st"] == "paused":
+            self.actions.do(n, "resuming", ["docker", "unpause", f"lamp-{n}"])
+        else:
+            self.actions.do(n, "pausing", ["docker", "pause", f"lamp-{n}"])
+
+    def update(self, snap, busy, projects):
+        if [p["name"] for p in projects] != self.names:
+            self._build(projects)
+        for p in projects:
+            n = p["name"]
+            r = self.rows[n]
+            st = snap["states"].get(n, "stopped")
+            b = busy.get(n) or busy.get("_all")
+            stats = fmt_stats(snap["stats"].get(f"lamp-{n}")) if st == "running" else ""
+            r["st"] = st
+            r["label"].set_text(status_label(n, st, stats, b))
+            flags = action_flags(st, b)
+            for k in ("open", "start", "restart", "stop"):
+                r[k].set_sensitive(flags[k])
+            r["toggle"].set_label("Resume" if st == "paused" else "Pause")
+            r["toggle"].set_sensitive(flags["resume"] if st == "paused" else flags["pause"])
+        parts = [fmt_stats(snap["stats"].get(c)) for c in ("lamp-mysql8", "lamp-phpmyadmin")]
+        self.shared_label.set_text(f"{'●' if snap['shared'] == 'running' else '○'} MySQL + phpMyAdmin   "
+                                   + " | ".join(x for x in parts if x))
+        self.stop_all.set_sensitive(not busy.get("_all"))
+
+    def show(self):
+        self.window.show_all()
+        self.window.present()
+
+    def hide(self):
+        self.window.hide()
+
+
 def once(fn):
     """Wrap fn as a one-shot GLib idle callback. GLib re-runs an idle callback that returns a
     truthy value forever, so always return False. (Returning True here crashed the machine.)"""
@@ -142,10 +266,11 @@ def main_gui():
     gi.require_version("AyatanaAppIndicator3", "0.1")
     from gi.repository import AyatanaAppIndicator3 as AppIndicator, GLib, Gtk
 
-    ICON = {"running": "●", "paused": "⏸", "stopped": "○"}
     busy = {}          # project -> verb being run ("starting", "stopping"...)
     widgets = {}       # project -> dict of menu items
-    state = {"snap": {"states": {}, "stats": {}, "shared": "stopped"}, "names": None}
+    state = {"snap": {"states": {}, "stats": {}, "shared": "stopped"}, "names": None, "projects": []}
+
+    panel_ref = {}
 
     ind = AppIndicator.Indicator.new("lamp-indicator", "network-server-symbolic",
                                      AppIndicator.IndicatorCategory.APPLICATION_STATUS)
@@ -171,6 +296,19 @@ def main_gui():
     def open_url(url):
         subprocess.Popen(["xdg-open", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+    class PanelActions:
+        def do(self, project, verb, cmd):
+            do(project, verb, cmd)
+
+        def open_url(self, url):
+            open_url(url)
+
+    def open_panel():
+        if "panel" not in panel_ref:
+            panel_ref["panel"] = Panel(Gtk, state["projects"], PanelActions())
+        panel_ref["panel"].update(state["snap"], busy, state["projects"])
+        panel_ref["panel"].show()
+
     def item(label, cb):
         it = Gtk.MenuItem(label=label)
         it.connect("activate", lambda *_: cb())
@@ -181,6 +319,9 @@ def main_gui():
             menu.remove(c)
         widgets.clear()
         projects = load_projects()
+        state["projects"] = projects
+        menu.append(item("Open panel…", open_panel))
+        menu.append(Gtk.SeparatorMenuItem())
         for p in projects:
             n = p["name"]
             head = Gtk.MenuItem(label=n)
@@ -221,19 +362,17 @@ def main_gui():
             running += st == "running"
             b = busy.get(n) or busy.get("_all")
             stats = fmt_stats(snap["stats"].get(f"lamp-{n}")) if st == "running" else ""
-            w["head"].set_label(f"⏳ {n} — {b}…" if b else f"{ICON.get(st, '○')} {n}   {stats}".rstrip())
-            idle = not b
-            w["open"].set_sensitive(st == "running" and idle)
-            w["start"].set_sensitive(st == "stopped" and idle)
-            w["pause"].set_sensitive(st == "running" and idle)
-            w["resume"].set_sensitive(st == "paused" and idle)
-            w["restart"].set_sensitive(st in ("running", "paused") and idle)
-            w["stop"].set_sensitive(st in ("running", "paused") and idle)
+            w["head"].set_label(status_label(n, st, stats, b))
+            for k, on in action_flags(st, b).items():
+                w[k].set_sensitive(on)
         sh = widgets.get("_shared")
         if sh:
             parts = [fmt_stats(snap["stats"].get(c)) for c in ("lamp-mysql8", "lamp-phpmyadmin")]
             sh["head"].set_label(f"{'●' if snap['shared'] == 'running' else '○'} MySQL + phpMyAdmin   "
                                  + " | ".join(x for x in parts if x))
+        pn = panel_ref.get("panel")
+        if pn is not None and pn.window.get_visible():
+            pn.update(snap, busy, state["projects"])
         ind.set_label(str(running) if running else "", "")
         ind.set_icon_full("network-server-symbolic" if running else "network-offline-symbolic", "LAMP")
         return False

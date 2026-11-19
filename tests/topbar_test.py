@@ -59,4 +59,14 @@ check("host_from_env LAMP_HOST", m.host_from_env({"LAMP_HOST": "127.0.0.1"}), "1
 check("host_from_env empty value falls back", m.host_from_env({"LAMP_HOST": ""}), "localhost")
 check("pma_url", m.pma_url(), "http://" + m.current_host() + ":8080")
 check("no hardcoded http://localhost left in app", "http://localhost" in (root / "topbar" / "lamp_indicator.py").read_text(), False)
+
+# --- shared button rules (tray menu and panel use the same ones)
+f = m.action_flags
+check("flags stopped", f("stopped", None), {"open": False, "start": True, "pause": False, "resume": False, "restart": False, "stop": False})
+check("flags running", f("running", None), {"open": True, "start": False, "pause": True, "resume": False, "restart": True, "stop": True})
+check("flags paused", f("paused", None), {"open": False, "start": False, "pause": False, "resume": True, "restart": True, "stop": True})
+check("flags busy disables all", any(f("running", "stopping").values()), False)
+check("status_label running", m.status_label("fazp", "running", "0.3% CPU · 15 MiB", None), "● fazp   0.3% CPU · 15 MiB")
+check("status_label paused", m.status_label("fazp", "paused", "", None), "⏸ fazp")
+check("status_label busy", m.status_label("fazp", "running", "x", "stopping"), "⏳ fazp — stopping…")
 sys.exit(1 if fails else 0)

@@ -47,6 +47,15 @@ URLs use `localhost` (fazp rejects any other host). Chrome upgrades `http://loca
 
 Caveat: browsers share cookies across `localhost` ports, so logins of two projects can overwrite each other. HTTPS uses a self-signed cert: the browser warns once.
 
+## Top-bar app (GNOME)
+
+A small indicator in the Ubuntu top bar shows every project (● running, ⏸ paused, ○ stopped, with CPU and RAM) and the running count. Install with `topbar/install.sh` (autostart at login, starts now; `topbar/install.sh --remove` undoes it). It needs `python3-gi`, `gir1.2-ayatanaappindicator3-0.1` and the GNOME AppIndicator extension; the script checks and prints the `apt` line if something is missing.
+
+- **Click the icon, then "Open panel…"**: a small always-on-top window with Open in browser, Start, Pause/Resume, Restart and Stop for each project, plus Open phpMyAdmin and Stop all. It **stays open** after Start, Stop, Pause, Restart and Stop all (GNOME closes tray menus on every click, so the panel exists for that). Only the "Open in browser" and "Open phpMyAdmin" buttons close it. Esc or the window X also closes it.
+- The tray menu has the same actions as quick shortcuts. Pause freezes the web container only; MySQL keeps running.
+- Terminal view of the same table: `python3 topbar/lamp_indicator.py --status`.
+- Tests: `python3 tests/topbar_test.py`, `xvfb-run -a python3 tests/topbar_panel_test.py`, `dbus-run-session -- xvfb-run -a python3 tests/topbar_wiring_test.py`.
+
 ## Per-project setup
 
 Each project has `projects/<name>.env`:
