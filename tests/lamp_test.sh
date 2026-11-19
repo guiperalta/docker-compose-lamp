@@ -19,5 +19,15 @@ rm -f projects/zz-missing.env
 [ $rc -ne 0 ] && ok "missing dir exits non-zero" || bad "missing dir exits non-zero"
 [ -z "$(docker ps -aq --filter name=lamp-zz-missing)" ] && ok "missing dir starts no container" || bad "missing dir starts no container"
 
+# WRITABLE_DIRS are created (idempotent, nested ok) by `lamp prep`, no container needed
+tmp=$(mktemp -d)
+printf 'PROJECT_NAME=zz-prep\nPROJECT_DIR=%s\nPHPVERSION=php83\nHTTP_PORT=8997\nHTTPS_PORT=8996\nWRITABLE_DIRS="temp_not_auto_delete a/b"\n' "$tmp" > projects/zz-prep.env
+./lamp prep zz-prep >/dev/null 2>&1; rc=$?
+[ $rc -eq 0 ] && ok "prep exits 0" || bad "prep exits 0"
+[ -d "$tmp/temp_not_auto_delete" ] && [ -w "$tmp/temp_not_auto_delete" ] && ok "prep creates writable dir" || bad "prep creates writable dir"
+[ -d "$tmp/a/b" ] && ok "prep creates nested dir" || bad "prep creates nested dir"
+./lamp prep zz-prep >/dev/null 2>&1 && ok "prep idempotent" || bad "prep idempotent"
+rm -f projects/zz-prep.env; rm -rf "$tmp"
+
 ./lamp ls >/dev/null 2>&1 && ok "ls exits 0" || bad "ls exits 0"
 exit $fail

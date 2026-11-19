@@ -47,6 +47,8 @@ lamp down-all
 
 Shared: MySQL `127.0.0.1:3306` (one instance, one database per project), phpMyAdmin `http://localhost:8080`.
 
+Per-project setup: optional `WRITABLE_DIRS="dir1 dir2"` in the project file (paths relative to the project folder). `lamp up` creates them before the container starts. escrybe uses it for `temp_not_auto_delete`.
+
 Add a project: create `projects/<name>.env` with `PROJECT_NAME`, `PROJECT_DIR`, `PHPVERSION`, `HTTP_PORT`, `HTTPS_PORT`. No YAML edits.
 
 Caveat: browsers share cookies across `localhost` ports, so logins of two projects can overwrite each other.

@@ -33,6 +33,25 @@ load_project() {
   [ -d "$PROJECT_DIR" ] || die "project dir '$PROJECT_DIR' for '$1' does not exist"
 }
 
+# WRITABLE_DIRS (space-separated, relative to PROJECT_DIR).
+# prepare_dirs: create on host before start (no root needed).
+prepare_dirs() {
+  local d
+  for d in ${WRITABLE_DIRS:-}; do
+    mkdir -p "$PROJECT_DIR/$d" || die "cannot create $PROJECT_DIR/$d"
+  done
+}
+
+# fix_owner: after start, chown to www-data as root inside the container. Needed when a dir already
+# exists owned by another uid (e.g. old uid 33) that the host user cannot chmod.
+fix_owner() {
+  local c=$1 d
+  for d in ${WRITABLE_DIRS:-}; do
+    docker exec -u root "$c" sh -c 'chown -R www-data:www-data "$1" && chmod -R u+rwX,g+rwX "$1"' _ "/var/www/html/$d" \
+      || echo "warn: could not fix owner of $d in $c" >&2
+  done
+}
+
 dc_shared()  { "${DC[@]}" -p lamp-shared --env-file .env -f compose.shared.yml "$@"; }
 dc_project() { "${DC[@]}" -p "lamp-$1" --env-file .env --env-file "projects/$1.env" -f compose.project.yml "${@:2}"; }
 
@@ -61,7 +80,7 @@ shared_down() { dc_shared down; }
 cmd_up() {
   valid_project "${1:-}" || exit 1
   local p=$1
-  ( load_project "$p" ) || exit 1
+  ( load_project "$p" && prepare_dirs ) || exit 1
   lease cancel
   if ! shared_up; then
     shared_down_if_idle; [ -n "$(running_projects)" ] && lease arm
@@ -72,8 +91,14 @@ cmd_up() {
     shared_down_if_idle; [ -n "$(running_projects)" ] && lease arm
     die "project '$p' failed to start"
   fi
+  ( load_project "$p" && fix_owner "lamp-$p" )
   lease arm
   ( load_project "$p"; echo "$p up: http://localhost:$HTTP_PORT  https://localhost:$HTTPS_PORT  (pma http://localhost:$HOST_MACHINE_PMA_PORT)" )
+}
+
+cmd_prep() {
+  valid_project "${1:-}" || exit 1
+  ( load_project "$1" && prepare_dirs )
 }
 
 cmd_down() {
@@ -113,6 +138,7 @@ Usage: lamp <command> [project]
   down <p>      stop project (stops MySQL when last project stops)
   restart <p>   down + up
   down-all      stop everything
+  prep <p>      create project's WRITABLE_DIRS only (up does this too)
   ls            show running projects and URLs
   logs <p> [-f] container logs
   shell <p>     bash inside the project container
@@ -130,6 +156,7 @@ case "${1:-help}" in
   down)     shift; cmd_down "${1:-}" ;;
   restart)  shift; cmd_down "${1:-}" && cmd_up "${1:-}" ;;
   down-all) cmd_down_all ;;
+  prep)     shift; cmd_prep "${1:-}" ;;
   ls)       cmd_ls ;;
   logs)     shift; valid_project "${1:-}" || exit 1; p=$1; shift; docker logs "$@" "lamp-$p" ;;
   shell)    shift; valid_project "${1:-}" || exit 1; docker exec -it "lamp-$1" bash ;;
