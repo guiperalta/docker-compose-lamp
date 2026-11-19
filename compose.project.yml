@@ -9,7 +9,6 @@ services:
     container_name: "lamp-${PROJECT_NAME}"
     restart: "no"
     ports:
-      - "${HTTP_PORT}:80"
       - "${HTTPS_PORT}:443"
     volumes:
       - ${PROJECT_DIR}:/var/www/html:rw
@@ -31,7 +30,21 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
+      - default
       - lamp-net
+  # Publishes HTTP_PORT and answers both plain HTTP and TLS on it (see config/haproxy/haproxy.cfg)
+  front:
+    image: haproxy:3.0-alpine
+    container_name: "lamp-${PROJECT_NAME}-front"
+    restart: "no"
+    depends_on:
+      - webserver
+    ports:
+      - "${HTTP_PORT}:8000"
+    volumes:
+      - ./config/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    networks:
+      - default
 networks:
   lamp-net:
     external: true

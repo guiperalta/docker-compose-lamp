@@ -11,10 +11,10 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 LAMP = REPO / "lamp"
 PROJECTS_DIR = REPO / "projects"
 REFRESH_SECONDS = 5
-# Default host is 127.0.0.1, not the name localhost: Chrome upgrades localhost links opened from other
-# apps to https, which breaks our plain-HTTP ports (ERR_SSL_PROTOCOL_ERROR). IPs are never upgraded.
-# Switch back with LAMP_HOST=localhost in .env once Chrome no longer upgrades them.
-DEFAULT_HOST = "127.0.0.1"
+# Default host is localhost: fazp only accepts that exact host. Each project's HTTP port also answers
+# TLS (haproxy "front" container), so Chrome's http->https upgrade of localhost links works.
+# LAMP_HOST in .env overrides it (127.0.0.1 is never upgraded by Chrome but fazp rejects it).
+DEFAULT_HOST = "localhost"
 
 
 def host_from_env(env):
@@ -66,7 +66,7 @@ def parse_ps(output):
         if "\t" not in line:
             continue
         name, state = line.split("\t", 1)
-        if name.startswith("lamp-") and name not in ("lamp-mysql8", "lamp-phpmyadmin"):
+        if name.startswith("lamp-") and not name.endswith("-front") and name not in ("lamp-mysql8", "lamp-phpmyadmin"):
             res[name[5:]] = state.strip()
     return res
 

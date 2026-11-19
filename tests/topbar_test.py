@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory() as d:
 
 check("parse_ps", m.parse_ps("lamp-fazp\trunning\nlamp-escrybe\tpaused\nother\trunning\n"),
       {"fazp": "running", "escrybe": "paused"})
+check("parse_ps ignores -front containers", m.parse_ps("lamp-fazp\trunning\nlamp-fazp-front\trunning\n"), {"fazp": "running"})
 check("parse_stats", m.parse_stats("lamp-fazp\t0.31%\t15MiB / 30.24GiB\nlamp-mysql8\t1.20%\t412.5MiB / 30.24GiB\n"),
       {"lamp-fazp": ("0.31%", "15MiB"), "lamp-mysql8": ("1.20%", "412.5MiB")})
 check("fmt_stats", m.fmt_stats(("0.31%", "15MiB")), "0.3% CPU · 15 MiB")
@@ -51,11 +52,11 @@ check("no bare idle_add(request_refresh) (it returns True)", bad, [])
 
 # Chrome upgrades http://localhost links opened from other apps to https (SSL error on our plain-HTTP
 # ports). IP addresses are never upgraded, so the app must open 127.0.0.1.
-check("project_url uses 127.0.0.1", m.project_url("8081"), "http://127.0.0.1:8081")
-check("project_url host override", m.project_url("8081", "localhost"), "http://localhost:8081")
-check("host_from_env default", m.host_from_env({}), "127.0.0.1")
-check("host_from_env LAMP_HOST", m.host_from_env({"LAMP_HOST": "localhost"}), "localhost")
-check("host_from_env empty value falls back", m.host_from_env({"LAMP_HOST": ""}), "127.0.0.1")
+check("project_url uses localhost by default", m.project_url("8081", None) if False else m.project_url("8081", m.DEFAULT_HOST), "http://localhost:8081")
+check("project_url host override", m.project_url("8081", "127.0.0.1"), "http://127.0.0.1:8081")
+check("host_from_env default", m.host_from_env({}), "localhost")
+check("host_from_env LAMP_HOST", m.host_from_env({"LAMP_HOST": "127.0.0.1"}), "127.0.0.1")
+check("host_from_env empty value falls back", m.host_from_env({"LAMP_HOST": ""}), "localhost")
 check("pma_url", m.pma_url(), "http://" + m.current_host() + ":8080")
 check("no hardcoded http://localhost left in app", "http://localhost" in (root / "topbar" / "lamp_indicator.py").read_text(), False)
 sys.exit(1 if fails else 0)

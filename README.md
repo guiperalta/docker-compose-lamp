@@ -41,9 +41,9 @@ lamp init           # first run on a new machine
 | lps-escrybe | `www-lps-escrybe` | 8082 | 8482 |
 | fazp | `www-fazp` | 8083 | 8483 |
 
-Shared: MySQL `127.0.0.1:3306` (one instance, one database per project), phpMyAdmin `http://127.0.0.1:8080` (user `root`, password from `.env`).
+Shared: MySQL `127.0.0.1:3306` (one instance, one database per project), phpMyAdmin `http://localhost:8080` (user `root`, password from `.env`).
 
-URLs use `127.0.0.1` because Chrome can upgrade `http://localhost` links opened from other apps to https (`ERR_SSL_PROTOCOL_ERROR` on these plain-HTTP ports). Typing `localhost:8081` without `http://` does the same. To use the name `localhost`, add `LAMP_HOST=localhost` to `.env` (lamp and the top-bar app both read it, no restart needed).
+URLs use `localhost` (fazp rejects any other host). Chrome upgrades `http://localhost:PORT` to `https://localhost:PORT`, so every project's HTTP port also answers TLS: a small `haproxy` container per project (`lamp-<name>-front`, config in `config/haproxy/haproxy.cfg`) looks at the first bytes and forwards plain HTTP to Apache's port 80 and TLS to its port 443. Both `http://` and `https://` work on the same port. The browser warns once about the self-signed certificate. Change the host with `LAMP_HOST=` in `.env`; `127.0.0.1` is never upgraded by Chrome but fazp rejects it.
 
 Caveat: browsers share cookies across `localhost` ports, so logins of two projects can overwrite each other. HTTPS uses a self-signed cert: the browser warns once.
 

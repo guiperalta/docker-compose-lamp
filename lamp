@@ -27,8 +27,8 @@ valid_project() {
   fi
 }
 
-# host shown in printed URLs: LAMP_HOST from .env, default 127.0.0.1 (see sample.env)
-lamp_host() { local h; h=$(sed -n 's/^LAMP_HOST=//p' .env 2>/dev/null | tr -d '"' | tail -1); echo "${h:-127.0.0.1}"; }
+# host shown in printed URLs: LAMP_HOST from .env, default localhost (see sample.env)
+lamp_host() { local h; h=$(sed -n 's/^LAMP_HOST=//p' .env 2>/dev/null | tr -d '"' | tail -1); echo "${h:-localhost}"; }
 
 # load PROJECT_* vars of project $1 into this shell (+ shared .env)
 load_project() {
