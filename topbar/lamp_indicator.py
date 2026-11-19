@@ -11,13 +11,32 @@ REPO = pathlib.Path(__file__).resolve().parent.parent
 LAMP = REPO / "lamp"
 PROJECTS_DIR = REPO / "projects"
 REFRESH_SECONDS = 5
-# 127.0.0.1, not the name localhost: Chrome upgrades localhost links opened from other apps to https,
-# which breaks our plain-HTTP ports (ERR_SSL_PROTOCOL_ERROR). IPs are never upgraded.
-PMA_URL = "http://127.0.0.1:8080"
+# Default host is 127.0.0.1, not the name localhost: Chrome upgrades localhost links opened from other
+# apps to https, which breaks our plain-HTTP ports (ERR_SSL_PROTOCOL_ERROR). IPs are never upgraded.
+# Switch back with LAMP_HOST=localhost in .env once Chrome no longer upgrades them.
+DEFAULT_HOST = "127.0.0.1"
 
 
-def project_url(port):
-    return f"http://127.0.0.1:{port}"
+def host_from_env(env):
+    return env.get("LAMP_HOST") or DEFAULT_HOST
+
+
+def current_host():
+    """Read LAMP_HOST from .env every call, so editing .env applies without restarting the app."""
+    try:
+        return host_from_env(parse_env((REPO / ".env").read_text()))
+    except OSError:
+        return DEFAULT_HOST
+
+
+def project_url(port, host=None):
+    return f"http://{host or current_host()}:{port}"
+
+
+def pma_url():
+    return project_url("8080")
+
+
 
 
 # ---------- pure helpers (unit-tested in tests/topbar_test.py) ----------
@@ -181,7 +200,7 @@ def main_gui():
         menu.append(Gtk.SeparatorMenuItem())
         sh = Gtk.MenuItem(label="Shared: …")
         shsub = Gtk.Menu()
-        shsub.append(item("Open phpMyAdmin", lambda: open_url(PMA_URL)))
+        shsub.append(item("Open phpMyAdmin", lambda: open_url(pma_url())))
         sh.set_submenu(shsub)
         menu.append(sh)
         widgets["_shared"] = {"head": sh}

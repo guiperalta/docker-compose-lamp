@@ -62,5 +62,12 @@ for state in missing dir; do
 done
 rm -rf "$fresh"
 
+# LAMP_HOST in .env is honoured in URLs, never printed literally
+out=$(./lamp ls 2>&1)
+echo "$out" | grep -q '\${' && bad "ls prints no unexpanded variables" || ok "ls prints no unexpanded variables"
+if [ -n "$(docker ps -q --filter label=com.docker.compose.service=webserver --filter name=lamp-)" ]; then
+  echo "$out" | grep -q 'http://127.0.0.1:' && ok "ls uses default host 127.0.0.1" || bad "ls uses default host 127.0.0.1"
+fi
+
 ./lamp ls >/dev/null 2>&1 && ok "ls exits 0" || bad "ls exits 0"
 exit $fail

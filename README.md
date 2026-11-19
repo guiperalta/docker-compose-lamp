@@ -43,6 +43,8 @@ lamp init           # first run on a new machine
 
 Shared: MySQL `127.0.0.1:3306` (one instance, one database per project), phpMyAdmin `http://127.0.0.1:8080` (user `root`, password from `.env`).
 
+URLs use `127.0.0.1` because Chrome can upgrade `http://localhost` links opened from other apps to https (`ERR_SSL_PROTOCOL_ERROR` on these plain-HTTP ports). Typing `localhost:8081` without `http://` does the same. To use the name `localhost`, add `LAMP_HOST=localhost` to `.env` (lamp and the top-bar app both read it, no restart needed).
+
 Caveat: browsers share cookies across `localhost` ports, so logins of two projects can overwrite each other. HTTPS uses a self-signed cert: the browser warns once.
 
 ## Per-project setup

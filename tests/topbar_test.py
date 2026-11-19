@@ -52,6 +52,10 @@ check("no bare idle_add(request_refresh) (it returns True)", bad, [])
 # Chrome upgrades http://localhost links opened from other apps to https (SSL error on our plain-HTTP
 # ports). IP addresses are never upgraded, so the app must open 127.0.0.1.
 check("project_url uses 127.0.0.1", m.project_url("8081"), "http://127.0.0.1:8081")
-check("PMA_URL uses 127.0.0.1", m.PMA_URL, "http://127.0.0.1:8080")
-check("no http://localhost left in app", "http://localhost" in (root / "topbar" / "lamp_indicator.py").read_text(), False)
+check("project_url host override", m.project_url("8081", "localhost"), "http://localhost:8081")
+check("host_from_env default", m.host_from_env({}), "127.0.0.1")
+check("host_from_env LAMP_HOST", m.host_from_env({"LAMP_HOST": "localhost"}), "localhost")
+check("host_from_env empty value falls back", m.host_from_env({"LAMP_HOST": ""}), "127.0.0.1")
+check("pma_url", m.pma_url(), "http://" + m.current_host() + ":8080")
+check("no hardcoded http://localhost left in app", "http://localhost" in (root / "topbar" / "lamp_indicator.py").read_text(), False)
 sys.exit(1 if fails else 0)
