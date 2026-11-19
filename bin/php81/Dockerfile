@@ -1,4 +1,4 @@
-FROM php:8.1-apache-buster
+FROM php:8.1-apache-bookworm
 
 # Surpresses debconf complaints of trying to install apt packages interactively
 # https://github.com/moby/moby/issues/4032#issuecomment-192327844
@@ -14,7 +14,7 @@ RUN apt-get -y update --fix-missing && \
 
 # Install useful tools and install important libaries
 RUN apt-get -y update && \
-    apt-get -y --no-install-recommends install nano wget \
+    apt-get -y --no-install-recommends install wget \
 dialog \
 libsqlite3-dev \
 libsqlite3-0 && \
@@ -36,23 +36,22 @@ openssl && \
     curl -sS https://getcomposer.org/installer | php -- --install-dir=/usr/local/bin --filename=composer
 
 # Install xdebug
-RUN pecl install xdebug-3.1.4 && \
+RUN pecl install xdebug && \
     docker-php-ext-enable xdebug && \
     mkdir /var/log/xdebug
 
 # Install redis
-RUN pecl install redis-5.3.3 && \
-    docker-php-ext-enable redis
+#RUN pecl install redis-6.0.2 && \
+#    docker-php-ext-enable redis
 
 # Install imagick
 RUN apt-get update && \
     apt-get -y --no-install-recommends install --fix-missing libmagickwand-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Workarround until imagick is available in pecl with php8 support
 # Imagick Commit to install
 # https://github.com/Imagick/imagick
-ARG IMAGICK_COMMIT="661405abe21d12003207bc8eb0963fafc2c02ee4"
+ARG IMAGICK_COMMIT="28f27044e435a2b203e32675e942eb8de620ee58"
 
 RUN cd /usr/local/src && \
     git clone https://github.com/Imagick/imagick && \
@@ -90,14 +89,35 @@ libpng-dev && \
     docker-php-ext-configure gd --enable-gd --with-freetype --with-jpeg && \
     docker-php-ext-install gd
 
-# Insure an SSL directory exists
-RUN mkdir -p /etc/apache2/ssl
+RUN apt-get -y update && \
+    apt-get install ghostscript vim -y
+
+# Ensure an SSL directory exists and create logs folder
+RUN mkdir -p /etc/apache2/ssl && \
+    mkdir -p /var/www && \
+    mkdir -p -m 777 /var/www/logs
 
 # Enable SSL support
 RUN a2enmod ssl && a2enmod rewrite
 
 # Enable apache modules
 RUN a2enmod rewrite headers
+
+# Run Apache as the host user that owns the bind-mounted project folder.
+# By default www-data is uid 33, so anything the host creates under the mount with
+# mode 755 (upload folders, staged files) is read-only to PHP: uploads fail and
+# temp files are never cleaned up. Mapping www-data onto the host uid/gid makes
+# files written inside the container land with the right ownership instead.
+# Override per machine with:
+#   docker compose build --build-arg PUID=$(id -u) --build-arg PGID=$(id -g) webserver
+ARG PUID=1000
+ARG PGID=1000
+RUN groupmod -o -g "${PGID}" www-data && \
+    usermod -o -u "${PUID}" -g "${PGID}" www-data && \
+    for d in /var/www /var/log/apache2 /var/lock/apache2 /var/run/apache2; do \
+        [ -e "$d" ] && chown -R www-data:www-data "$d"; \
+    done; \
+    true
 
 # Cleanup
 RUN rm -rf /usr/src/*
