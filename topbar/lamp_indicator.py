@@ -76,6 +76,15 @@ def shared_state(running_names):
 
 
 # ---------- docker access ----------
+def once(fn):
+    """Wrap fn as a one-shot GLib idle callback. GLib re-runs an idle callback that returns a
+    truthy value forever, so always return False. (Returning True here crashed the machine.)"""
+    def wrapper(*_):
+        fn()
+        return False
+    return wrapper
+
+
 def _run(cmd, timeout=15):
     try:
         return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout).stdout
@@ -131,7 +140,7 @@ def main_gui():
             busy.pop(project, None)
             if r.returncode != 0:
                 GLib.idle_add(notify, f"{project}: {verb} failed\n{(r.stderr or r.stdout).strip()[-200:]}")
-            GLib.idle_add(request_refresh)
+            GLib.idle_add(once(refresh_async))
         threading.Thread(target=work, daemon=True).start()
 
     def open_url(url):
@@ -204,20 +213,34 @@ def main_gui():
         ind.set_icon_full("network-server-symbolic" if running else "network-offline-symbolic", "LAMP")
         return False
 
-    def request_refresh():
+    def refresh_async():
+        """Fetch docker state in a thread, apply on the GTK thread. Never overlaps itself."""
+        if state.get("refreshing"):
+            return
+        state["refreshing"] = True
         def work():
-            snap = snapshot()
+            try:
+                snap = snapshot()
+            except Exception:
+                snap = None
             def apply():
+                state["refreshing"] = False
+                if snap is None:
+                    return
                 if state["names"] != [p["name"] for p in load_projects()]:
                     build_menu()
                 state["snap"] = snap
                 refresh_labels()
-            GLib.idle_add(apply)
+            GLib.idle_add(once(apply))
         threading.Thread(target=work, daemon=True).start()
-        return True  # keep GLib timeout alive
+
+    def request_refresh():
+        """Timer callback only (GLib.timeout_add_seconds): True keeps the timer alive."""
+        refresh_async()
+        return True
 
     build_menu()
-    request_refresh()
+    refresh_async()
     GLib.timeout_add_seconds(REFRESH_SECONDS, request_refresh)
     Gtk.main()
 

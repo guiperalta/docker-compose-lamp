@@ -26,4 +26,26 @@ check("fmt_stats", m.fmt_stats(("0.31%", "15MiB")), "0.3% CPU · 15 MiB")
 check("fmt_stats none", m.fmt_stats(None), "")
 check("shared_state", m.shared_state({"lamp-mysql8", "lamp-phpmyadmin"}), "running")
 check("shared_state stopped", m.shared_state(set()), "stopped")
+
+# --- regression: Stop crashed the machine. An idle callback that returns True re-runs forever
+# (100k+ calls/200ms), each spawning docker subprocesses. One-shot callbacks must return False.
+calls = []
+check("once returns False and calls fn once", (m.once(lambda: calls.append(1))(), calls), (False, [1]))
+check("once returns False even if fn returns True", m.once(lambda: True)(), False)
+
+try:
+    import gi
+    from gi.repository import GLib
+    n = [0]
+    loop = GLib.MainLoop()
+    GLib.idle_add(m.once(lambda: n.__setitem__(0, n[0] + 1) or True))
+    GLib.timeout_add(150, loop.quit); loop.run()
+    check("idle_add(once(fn)) runs exactly once under real GLib", n[0], 1)
+except ImportError:
+    print("SKIP: GLib not available")
+
+import re
+src = (root / "topbar" / "lamp_indicator.py").read_text()
+bad = [l.strip() for l in src.splitlines() if "GLib.idle_add(request_refresh" in l]
+check("no bare idle_add(request_refresh) (it returns True)", bad, [])
 sys.exit(1 if fails else 0)
