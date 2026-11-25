@@ -67,7 +67,9 @@ def parse_ps(output):
             continue
         name, state = line.split("\t", 1)
         if name.startswith("lamp-") and not name.endswith("-front") and name not in ("lamp-mysql8", "lamp-phpmyadmin"):
-            res[name[5:]] = state.strip()
+            st = state.strip()
+            # exited/created/dead/restarting etc. all mean 'not up': Start must be offered
+            res[name[5:]] = st if st in ("running", "paused") else "stopped"
     return res
 
 

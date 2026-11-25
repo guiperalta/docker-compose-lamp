@@ -20,6 +20,7 @@ with tempfile.TemporaryDirectory() as d:
 
 check("parse_ps", m.parse_ps("lamp-fazp\trunning\nlamp-escrybe\tpaused\nother\trunning\n"),
       {"fazp": "running", "escrybe": "paused"})
+check("parse_ps exited/created/dead -> stopped", m.parse_ps("lamp-a\texited\nlamp-b\tcreated\nlamp-c\tdead\n"), {"a": "stopped", "b": "stopped", "c": "stopped"})
 check("parse_ps ignores -front containers", m.parse_ps("lamp-fazp\trunning\nlamp-fazp-front\trunning\n"), {"fazp": "running"})
 check("parse_stats", m.parse_stats("lamp-fazp\t0.31%\t15MiB / 30.24GiB\nlamp-mysql8\t1.20%\t412.5MiB / 30.24GiB\n"),
       {"lamp-fazp": ("0.31%", "15MiB"), "lamp-mysql8": ("1.20%", "412.5MiB")})
