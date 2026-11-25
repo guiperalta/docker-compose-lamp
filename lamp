@@ -3,7 +3,7 @@
 set -uo pipefail
 ROOT="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 cd "$ROOT" || exit 1
-LEASE=/home/peralta/.local/bin/dev-services-lease
+LEASE="${LAMP_LEASE:-/home/peralta/.local/bin/dev-services-lease}"
 
 if docker compose version >/dev/null 2>&1; then
   DC=(docker compose)
@@ -14,7 +14,12 @@ else
 fi
 
 die() { echo "ERROR: $*" >&2; exit 1; }
-lease() { [ -x "$LEASE" ] && "$LEASE" "$1" || echo "warn: $LEASE not found, skipping lease $1" >&2; }
+NO_TIMER="$ROOT/.lamp-no-timer"   # exists = user turned the auto-stop timer off (see `lamp timer`)
+lease() {
+  # arm is skipped while the user disabled the timer; cancel always runs
+  if [ "$1" = arm ] && [ -e "$NO_TIMER" ]; then return 0; fi
+  [ -x "$LEASE" ] && "$LEASE" "$1" || echo "warn: $LEASE not found, skipping lease $1" >&2
+}
 
 list_projects() { for f in projects/*.env; do b=$(basename "$f" .env); echo "$b"; done; }
 
@@ -131,6 +136,21 @@ cmd_up() {
   ( load_project "$p"; h=$(lamp_host); echo "$p up: http://$h:$HTTP_PORT  https://$h:$HTTPS_PORT  (pma http://$h:$HOST_MACHINE_PMA_PORT)" )
 }
 
+# auto-stop timer (the 1h dev-services lease): status | on | off
+cmd_timer() {
+  case "${1:-status}" in
+    off) : > "$NO_TIMER"; [ -x "$LEASE" ] && "$LEASE" cancel >/dev/null; echo "timer off: projects stay up until you stop them" ;;
+    on)  rm -f "$NO_TIMER"
+         if [ -n "$(running_projects)" ]; then "$LEASE" arm; else echo "timer on (arms when a project starts)"; fi ;;
+    status) if [ -e "$NO_TIMER" ]; then echo "disabled"; else
+              m="/run/user/$(id -u)/dev-services-cleanup.deadline"
+              if [ -e "$m" ] && systemctl --user is-active --quiet dev-services-cleanup.timer; then
+                left=$(( $(stat -c %Y "$m") - $(date +%s) )); [ "$left" -lt 0 ] && left=0; echo "on $left"
+              else echo "idle"; fi; fi ;;
+    *) die "usage: lamp timer [status|on|off]" ;;
+  esac
+}
+
 cmd_config() {
   valid_project "${1:-}" || exit 1
   ( load_project "$1" ) || exit 1
@@ -226,6 +246,7 @@ Usage: lamp <command> [project]
   config <p>    show resolved compose config (debug)
   init          first run on a new machine (.env, ssl cert, dirs, checks)
   rebuild <p>   pull newest PHP patch release and rebuild (security updates), then up
+  timer [on|off] auto-stop timer (1h after last start): show status, enable, disable
   ls            show running projects and URLs
   logs <p> [-f] container logs
   shell <p>     bash inside the project container
@@ -247,6 +268,7 @@ case "${1:-help}" in
   rebuild)  shift; cmd_rebuild "${1:-}" ;;
   config)   shift; cmd_config "${1:-}" ;;
   prep)     shift; cmd_prep "${1:-}" ;;
+  timer)    shift; cmd_timer "${1:-status}" ;;
   ls)       cmd_ls ;;
   logs)     shift; valid_project "${1:-}" || exit 1; p=$1; shift; docker logs "$@" "lamp-$p" ;;
   shell)    shift; valid_project "${1:-}" || exit 1; docker exec -it "lamp-$1" bash ;;

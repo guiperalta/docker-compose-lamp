@@ -19,7 +19,7 @@ class Actions:
     def open_url(self, url): calls.append(("open", url))
 projects = [{"name": "escrybe", "port": "8081"}, {"name": "fazp", "port": "8083"}]
 snap = {"states": {"escrybe": "running", "fazp": "stopped"},
-        "stats": {"lamp-escrybe": ("0.3%", "15MiB")}, "shared": "running"}
+        "stats": {"lamp-escrybe": ("0.3%", "15MiB")}, "shared": "running", "timer": ("on", 3209)}
 p = m.Panel(Gtk, projects, Actions())
 p.update(snap, {}, projects)
 p.show()
@@ -30,6 +30,21 @@ check("running: start disabled", r["escrybe"]["start"].get_sensitive(), False)
 check("stopped: start enabled", r["fazp"]["start"].get_sensitive(), True)
 check("stopped: open disabled", r["fazp"]["open"].get_sensitive(), False)
 check("running: toggle says Pause", r["escrybe"]["toggle"].get_label(), "Pause")
+check("timer row shows time left", "53min" in p.timer_label.get_text(), True)
+check("timer on: toggle says Disable", p.timer_toggle.get_label(), "Disable")
+check("timer on: +1h enabled", p.timer_extend.get_sensitive(), True)
+p.timer_toggle.clicked()
+check("Disable runs lamp timer off", calls[-1][3][-2:], ["timer", "off"])
+check("timer click keeps window open", p.window.get_visible(), True)
+snap2 = dict(snap, timer=("disabled", 0))
+p.update(snap2, {}, projects)
+check("timer disabled: label OFF", "OFF" in p.timer_label.get_text(), True)
+check("timer disabled: toggle says Enable", p.timer_toggle.get_label(), "Enable")
+check("timer disabled: +1h disabled", p.timer_extend.get_sensitive(), False)
+p.timer_toggle.clicked()
+check("Enable runs lamp timer on", calls[-1][3][-2:], ["timer", "on"])
+p.update(snap, {}, projects)
+calls.clear()
 check("name label has stats", "0.3% CPU" in r["escrybe"]["label"].get_text(), True)
 
 # the window must STAY OPEN after an action

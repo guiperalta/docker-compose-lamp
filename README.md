@@ -53,6 +53,7 @@ A small indicator in the Ubuntu top bar shows every project (● running, ⏸ pa
 
 - **Click the icon, then "Open panel…"**: a small always-on-top window with Open in browser, Start, Pause/Resume, Restart and Stop for each project, plus Open phpMyAdmin and Stop all. It **stays open** after Start, Stop, Pause, Restart and Stop all (GNOME closes tray menus on every click, so the panel exists for that). Only the "Open in browser" and "Open phpMyAdmin" buttons close it. Esc or the window X also closes it.
 - The tray menu has the same actions as quick shortcuts. Pause freezes the web container only; MySQL keeps running.
+- **Auto-stop timer** (the 1h dev-services lease that stops containers after a test window): the panel shows the time left, with **Disable** / **Enable** and **+1h** buttons; the tray has the same under "Auto-stop timer". From a terminal: `lamp timer` (status), `lamp timer off`, `lamp timer on` (re-arms 1h). Disabled is remembered in `.lamp-no-timer` (not committed), so `lamp up` stops re-arming it until you enable it again. The timer itself is the shared `dev-services-cleanup.timer`; this only controls it, and it still stops only containers, never the Docker daemon.
 - Terminal view of the same table: `python3 topbar/lamp_indicator.py --status`.
 - Tests: `python3 tests/topbar_test.py`, `xvfb-run -a python3 tests/topbar_panel_test.py`, `dbus-run-session -- xvfb-run -a python3 tests/topbar_wiring_test.py`.
 

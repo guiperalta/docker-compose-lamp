@@ -69,5 +69,16 @@ if [ -n "$(docker ps -q --filter label=com.docker.compose.service=webserver --fi
   echo "$out" | grep -q 'http://localhost:' && ok "ls uses default host localhost" || bad "ls uses default host localhost"
 fi
 
+# timer: off/on/status in a copy, with a fake lease so the real timer is untouched
+tcopy=$(mktemp -d); git ls-files -z | xargs -0 -I{} cp --parents {} "$tcopy" 2>/dev/null
+fakel=$(mktemp); printf '#!/bin/sh\necho "$1" >> "%s.log"\n' "$fakel" > "$fakel"; chmod +x "$fakel"
+( cd "$tcopy" && export LAMP_LEASE="$fakel"
+  ./lamp timer off >/dev/null 2>&1; [ "$(./lamp timer status)" = disabled ] && echo ok1
+  ./lamp timer on >/dev/null 2>&1;  [ ! -e .lamp-no-timer ] && echo ok2 ) > "$tcopy/res" 2>&1
+grep -q ok1 "$tcopy/res" && ok "timer off -> status disabled" || bad "timer off -> status disabled"
+grep -q ok2 "$tcopy/res" && ok "timer on removes the flag" || bad "timer on removes the flag"
+grep -q cancel "$fakel.log" && ok "timer off cancels the lease" || bad "timer off cancels the lease"
+rm -rf "$tcopy" "$fakel" "$fakel.log"
+
 ./lamp ls >/dev/null 2>&1 && ok "ls exits 0" || bad "ls exits 0"
 exit $fail

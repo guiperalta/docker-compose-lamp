@@ -98,6 +98,36 @@ def fmt_stats(s):
     return f"{cpu} CPU · {mem}"
 
 
+def parse_timer(out):
+    """`lamp timer status` output -> ('disabled'|'idle'|'on', seconds_left)."""
+    parts = (out or "").split()
+    if parts[:1] == ["disabled"]:
+        return ("disabled", 0)
+    if len(parts) == 2 and parts[0] == "on" and parts[1].isdigit():
+        return ("on", int(parts[1]))
+    return ("idle", 0)
+
+
+def fmt_left(sec):
+    m = max(0, sec) // 60
+    return f"{m // 60}h{m % 60:02d}" if m >= 60 else f"{m}min"
+
+
+def timer_label(tm):
+    kind, left = tm
+    if kind == "disabled":
+        return "⏱ Auto-stop timer: OFF (projects stay up)"
+    if kind == "on":
+        return f"⏱ Auto-stop in {fmt_left(left)}"
+    return "⏱ Auto-stop timer: on (starts with a project)"
+
+
+def timer_buttons(tm):
+    """(toggle label, extra-button enabled). Toggle: Disable when on/idle, Enable when disabled."""
+    kind, _ = tm
+    return ("Enable" if kind == "disabled" else "Disable", kind == "on")
+
+
 def shared_state(running_names):
     return "running" if {"lamp-mysql8", "lamp-phpmyadmin"} & set(running_names) else "stopped"
 
@@ -185,12 +215,28 @@ class Panel:
         self.stop_all = self._button("Stop all", lambda: self.actions.do("_all", "stopping all", [str(LAMP), "down-all"]))
         srow.pack_start(self.stop_all, False, False, 0)
         self.box.pack_start(srow, False, False, 0)
+        trow = Gtk.Box(spacing=6)
+        self.timer_label = Gtk.Label(xalign=0)
+        self.timer_label.set_width_chars(38)
+        trow.pack_start(self.timer_label, True, True, 0)
+        self.timer_extend = self._button("+1h", lambda: self.actions.do("_timer", "re-arming timer", [str(LAMP), "timer", "on"]))
+        self.timer_toggle = self._button("Disable", self._toggle_timer)
+        trow.pack_start(self.timer_extend, False, False, 0)
+        trow.pack_start(self.timer_toggle, False, False, 0)
+        self.box.pack_start(trow, False, False, 0)
+        self.timer = ("idle", 0)
         self.names = [p["name"] for p in projects]
         self.box.show_all()
 
     def _open(self, url):
         self.actions.open_url(url)
         self.window.hide()
+
+    def _toggle_timer(self):
+        if self.timer[0] == "disabled":
+            self.actions.do("_timer", "enabling timer", [str(LAMP), "timer", "on"])
+        else:
+            self.actions.do("_timer", "disabling timer", [str(LAMP), "timer", "off"])
 
     def _toggle(self, n):
         if self.rows[n]["st"] == "paused":
@@ -218,6 +264,13 @@ class Panel:
         self.shared_label.set_text(f"{'●' if snap['shared'] == 'running' else '○'} MySQL + phpMyAdmin   "
                                    + " | ".join(x for x in parts if x))
         self.stop_all.set_sensitive(not busy.get("_all"))
+        self.timer = snap.get("timer", ("idle", 0))
+        label, extend_ok = timer_buttons(self.timer)
+        tb = busy.get("_timer")
+        self.timer_label.set_text(f"⏳ {tb}…" if tb else timer_label(self.timer))
+        self.timer_toggle.set_label(label)
+        self.timer_toggle.set_sensitive(not tb)
+        self.timer_extend.set_sensitive(extend_ok and not tb)
 
     def show(self):
         self.window.show_all()
@@ -249,7 +302,8 @@ def snapshot():
     all_running = {l.split("\t")[0] for l in ps.splitlines() if l.endswith("\trunning") or l.endswith("\tpaused")}
     stats = parse_stats(_run(["docker", "stats", "--no-stream", "--format",
                               "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}"], timeout=20))
-    return {"states": states, "stats": stats, "shared": shared_state(all_running)}
+    return {"states": states, "stats": stats, "shared": shared_state(all_running),
+            "timer": parse_timer(_run([str(LAMP), "timer", "status"], timeout=5))}
 
 
 def print_status():
@@ -259,6 +313,7 @@ def print_status():
         print(f'{p["name"]:<14}{st:<10}{fmt_stats(snap["stats"].get("lamp-" + p["name"])):<26}{project_url(p["port"])}')
     ms = [snap["stats"].get("lamp-mysql8"), snap["stats"].get("lamp-phpmyadmin")]
     print(f'{"shared":<14}{snap["shared"]:<10}{" | ".join(fmt_stats(x) for x in ms if x)}')
+    print(timer_label(snap["timer"]))
 
 
 # ---------- GUI ----------
@@ -270,7 +325,7 @@ def main_gui():
 
     busy = {}          # project -> verb being run ("starting", "stopping"...)
     widgets = {}       # project -> dict of menu items
-    state = {"snap": {"states": {}, "stats": {}, "shared": "stopped"}, "names": None, "projects": []}
+    state = {"snap": {"states": {}, "stats": {}, "shared": "stopped", "timer": ("idle", 0)}, "names": None, "projects": []}
 
     panel_ref = {}
 
@@ -311,6 +366,12 @@ def main_gui():
         panel_ref["panel"].update(state["snap"], busy, state["projects"])
         panel_ref["panel"].show()
 
+    def toggle_timer():
+        if state["snap"].get("timer", ("idle", 0))[0] == "disabled":
+            do("_timer", "enabling timer", [str(LAMP), "timer", "on"])
+        else:
+            do("_timer", "disabling timer", [str(LAMP), "timer", "off"])
+
     def item(label, cb):
         it = Gtk.MenuItem(label=label)
         it.connect("activate", lambda *_: cb())
@@ -349,6 +410,15 @@ def main_gui():
         widgets["_shared"] = {"head": sh}
         menu.append(item("Stop all", lambda: do("_all", "stopping all", [str(LAMP), "down-all"])))
         menu.append(Gtk.SeparatorMenuItem())
+        th = Gtk.MenuItem(label="⏱ Auto-stop timer")
+        tsub = Gtk.Menu()
+        widgets["_timer"] = {"head": th, "toggle": item("Disable", toggle_timer),
+                             "extend": item("Restart 1h", lambda: do("_timer", "re-arming timer", [str(LAMP), "timer", "on"]))}
+        tsub.append(widgets["_timer"]["toggle"])
+        tsub.append(widgets["_timer"]["extend"])
+        th.set_submenu(tsub)
+        menu.append(th)
+        menu.append(Gtk.SeparatorMenuItem())
         menu.append(item("Quit", Gtk.main_quit))
         menu.show_all()
         state["names"] = [p["name"] for p in projects]
@@ -372,6 +442,13 @@ def main_gui():
             parts = [fmt_stats(snap["stats"].get(c)) for c in ("lamp-mysql8", "lamp-phpmyadmin")]
             sh["head"].set_label(f"{'●' if snap['shared'] == 'running' else '○'} MySQL + phpMyAdmin   "
                                  + " | ".join(x for x in parts if x))
+        tw = widgets.get("_timer")
+        if tw:
+            tm = snap.get("timer", ("idle", 0))
+            tw["head"].set_label(timer_label(tm))
+            lab, ext = timer_buttons(tm)
+            tw["toggle"].set_label(lab)
+            tw["extend"].set_sensitive(ext)
         pn = panel_ref.get("panel")
         if pn is not None and pn.window.get_visible():
             pn.update(snap, busy, state["projects"])
