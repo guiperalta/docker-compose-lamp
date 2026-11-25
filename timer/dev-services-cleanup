@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -u
+
+echo "Development service cleanup started at $(date --iso-8601=seconds)"
+
+deadline_marker="/run/user/$(id -u)/dev-services-cleanup.deadline"
+
+# Avoid touching Docker when its daemon is not already running. In particular,
+# do not activate docker.socket just to discover that there is nothing to stop.
+if systemctl is-active --quiet docker.service; then
+  tracked_ids=()
+  if [[ -f "$deadline_marker" ]]; then
+    mapfile -t candidate_ids < "$deadline_marker"
+    for container_id in "${candidate_ids[@]}"; do
+      if [[ "$container_id" =~ ^[0-9a-f]{12,64}$ ]] \
+        && [[ "$(/usr/bin/docker inspect --format '{{.State.Running}}' "$container_id" 2>/dev/null)" == "true" ]]; then
+        tracked_ids+=("$container_id")
+      fi
+    done
+  fi
+  if ((${#tracked_ids[@]})); then
+    echo "Stopping ${#tracked_ids[@]} tracked Docker container(s)..."
+    /usr/bin/docker stop --time 30 "${tracked_ids[@]}"
+  else
+    echo "No tracked Docker containers are running."
+  fi
+else
+  echo "Docker daemon is not active."
+fi
+
+# Agents start standalone long-running development servers with this prefix.
+mapfile -t dev_units < <(
+  systemctl --user list-units 'dev-session-*.service' \
+    --type=service --state=running --no-legend --plain 2>/dev/null \
+    | awk '{print $1}'
+)
+if ((${#dev_units[@]})); then
+  echo "Stopping ${#dev_units[@]} standalone development service(s)..."
+  systemctl --user stop "${dev_units[@]}"
+else
+  echo "No standalone development services are running."
+fi
+
+echo "Development service cleanup finished at $(date --iso-8601=seconds)"

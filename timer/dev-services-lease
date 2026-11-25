@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+timer_unit="dev-services-cleanup.timer"
+service_unit="dev-services-cleanup.service"
+deadline_marker="/run/user/$(id -u)/dev-services-cleanup.deadline"
+
+case "${1:-status}" in
+  arm)
+    systemctl --user daemon-reload
+    : > "$deadline_marker"
+    if systemctl is-active --quiet docker.service; then
+      /usr/bin/docker ps -q > "$deadline_marker" 2>/dev/null || true
+    fi
+    touch --date='+1 hour' "$deadline_marker"
+    systemctl --user restart "$timer_unit"
+    next_run=$(
+      systemctl --user list-timers "$timer_unit" --all --no-legend --no-pager \
+        | awk 'NR == 1 {print $1 " " $2 " " $3 " " $4}'
+    )
+    printf 'Cleanup armed for %s\n' "$next_run"
+    ;;
+  cancel)
+    systemctl --user stop "$timer_unit"
+    rm -f "$deadline_marker"
+    echo "Cleanup timer cancelled."
+    ;;
+  cleanup-now)
+    systemctl --user stop "$timer_unit" || true
+    : > "$deadline_marker"
+    if systemctl is-active --quiet docker.service; then
+      /usr/bin/docker ps -q > "$deadline_marker" 2>/dev/null || true
+    fi
+    touch --date='now' "$deadline_marker"
+    systemctl --user start "$service_unit"
+    echo "Tracked containers and user development services were handled now; the Docker daemon remains running."
+    ;;
+  status)
+    systemctl --user status "$timer_unit" --no-pager || true
+    ;;
+  *)
+    echo "Usage: dev-services-lease {arm|cancel|cleanup-now|status}" >&2
+    exit 2
+    ;;
+esac

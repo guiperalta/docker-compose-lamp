@@ -3,7 +3,7 @@
 set -uo pipefail
 ROOT="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 cd "$ROOT" || exit 1
-LEASE="${LAMP_LEASE:-/home/peralta/.local/bin/dev-services-lease}"
+LEASE="${LAMP_LEASE:-$ROOT/timer/dev-services-lease}"
 
 if docker compose version >/dev/null 2>&1; then
   DC=(docker compose)
@@ -18,8 +18,10 @@ NO_TIMER="$ROOT/.lamp-no-timer"   # exists = user turned the auto-stop timer off
 lease() {
   # arm is skipped while the user disabled the timer; cancel always runs
   if [ "$1" = arm ] && [ -e "$NO_TIMER" ]; then return 0; fi
-  [ -x "$LEASE" ] && "$LEASE" "$1" || echo "warn: $LEASE not found, skipping lease $1" >&2
+  if ! timer_installed; then echo "warn: auto-stop timer not installed (run: lamp timer install), skipping lease $1" >&2; return 0; fi
+  "$LEASE" "$1"
 }
+timer_installed() { [ -n "${LAMP_LEASE:-}" ] || [ -e "$HOME/.config/systemd/user/dev-services-cleanup.timer" ]; }
 
 list_projects() { for f in projects/*.env; do b=$(basename "$f" .env); echo "$b"; done; }
 
@@ -136,18 +138,45 @@ cmd_up() {
   ( load_project "$p"; h=$(lamp_host); echo "$p up: http://$h:$HTTP_PORT  https://$h:$HTTPS_PORT  (pma http://$h:$HOST_MACHINE_PMA_PORT)" )
 }
 
-# auto-stop timer (the 1h dev-services lease): status | on | off
+# link repo timer/ files into ~/.local/bin and ~/.config/systemd/user (idempotent, backs up other files)
+timer_link() {
+  local src=$1 dst=$2
+  mkdir -p "$(dirname "$dst")"
+  if [ -L "$dst" ] && [ "$(readlink -f "$dst")" = "$(readlink -f "$src")" ]; then return 0; fi
+  if [ -e "$dst" ] || [ -L "$dst" ]; then
+    if cmp -s "$src" "$dst"; then rm -f "$dst"; else mv "$dst" "$dst.bak" && echo "kept old $dst as $dst.bak"; fi
+  fi
+  ln -s "$ROOT/$src" "$dst"
+}
+timer_install() {
+  local f
+  for f in dev-services-lease dev-services-cleanup; do timer_link "timer/$f" "$HOME/.local/bin/$f"; done
+  for f in dev-services-cleanup.timer dev-services-cleanup.service; do timer_link "timer/$f" "$HOME/.config/systemd/user/$f"; done
+  [ -n "${LAMP_SKIP_SYSTEMCTL:-}" ] || systemctl --user daemon-reload
+  echo "auto-stop timer installed (repo timer/ is the source)"
+}
+timer_uninstall() {
+  local f
+  for f in dev-services-lease dev-services-cleanup; do [ -L "$HOME/.local/bin/$f" ] && rm -f "$HOME/.local/bin/$f"; done
+  for f in dev-services-cleanup.timer dev-services-cleanup.service; do [ -L "$HOME/.config/systemd/user/$f" ] && rm -f "$HOME/.config/systemd/user/$f"; done
+  [ -n "${LAMP_SKIP_SYSTEMCTL:-}" ] || systemctl --user daemon-reload
+  echo "auto-stop timer removed"
+}
+
+# auto-stop timer (the 1h dev-services lease): status | on | off | install | uninstall
 cmd_timer() {
   case "${1:-status}" in
+    install) timer_install ;;
+    uninstall) timer_uninstall ;;
     off) : > "$NO_TIMER"; [ -x "$LEASE" ] && "$LEASE" cancel >/dev/null; echo "timer off: projects stay up until you stop them" ;;
     on)  rm -f "$NO_TIMER"
          if [ -n "$(running_projects)" ]; then "$LEASE" arm; else echo "timer on (arms when a project starts)"; fi ;;
-    status) if [ -e "$NO_TIMER" ]; then echo "disabled"; else
+    status) if ! timer_installed; then echo "missing"; elif [ -e "$NO_TIMER" ]; then echo "disabled"; else
               m="/run/user/$(id -u)/dev-services-cleanup.deadline"
               if [ -e "$m" ] && systemctl --user is-active --quiet dev-services-cleanup.timer; then
                 left=$(( $(stat -c %Y "$m") - $(date +%s) )); [ "$left" -lt 0 ] && left=0; echo "on $left"
               else echo "idle"; fi; fi ;;
-    *) die "usage: lamp timer [status|on|off]" ;;
+    *) die "usage: lamp timer [status|on|off|install|uninstall]" ;;
   esac
 }
 
@@ -232,6 +261,7 @@ cmd_init() {
     ( set -a; . "projects/$p.env"; set +a
       [ -d "$PROJECT_DIR" ] && echo "ok       $p -> $PROJECT_DIR" || echo "MISSING  $p -> $PROJECT_DIR (clone/copy the project here)" )
   done
+  timer_install
   echo "init done. Next: lamp up <project>"
 }
 
@@ -246,7 +276,7 @@ Usage: lamp <command> [project]
   config <p>    show resolved compose config (debug)
   init          first run on a new machine (.env, ssl cert, dirs, checks)
   rebuild <p>   pull newest PHP patch release and rebuild (security updates), then up
-  timer [on|off] auto-stop timer (1h after last start): show status, enable, disable
+  timer [on|off|install|uninstall] auto-stop timer (1h after last start): status, enable, disable, link into ~
   ls            show running projects and URLs
   logs <p> [-f] container logs
   shell <p>     bash inside the project container

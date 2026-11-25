@@ -103,6 +103,8 @@ def parse_timer(out):
     parts = (out or "").split()
     if parts[:1] == ["disabled"]:
         return ("disabled", 0)
+    if parts[:1] == ["missing"]:
+        return ("missing", 0)
     if len(parts) == 2 and parts[0] == "on" and parts[1].isdigit():
         return ("on", int(parts[1]))
     return ("idle", 0)
@@ -115,6 +117,8 @@ def fmt_left(sec):
 
 def timer_label(tm):
     kind, left = tm
+    if kind == "missing":
+        return "⏱ Auto-stop timer not installed (lamp timer install)"
     if kind == "disabled":
         return "⏱ Auto-stop timer: OFF (projects stay up)"
     if kind == "on":
@@ -123,9 +127,9 @@ def timer_label(tm):
 
 
 def timer_buttons(tm):
-    """(toggle label, extra-button enabled). Toggle: Disable when on/idle, Enable when disabled."""
+    """(toggle label, +1h enabled, toggle enabled). Toggle: Disable when on/idle, Enable when disabled."""
     kind, _ = tm
-    return ("Enable" if kind == "disabled" else "Disable", kind == "on")
+    return ("Enable" if kind == "disabled" else "Disable", kind == "on", kind != "missing")
 
 
 def shared_state(running_names):
@@ -265,11 +269,11 @@ class Panel:
                                    + " | ".join(x for x in parts if x))
         self.stop_all.set_sensitive(not busy.get("_all"))
         self.timer = snap.get("timer", ("idle", 0))
-        label, extend_ok = timer_buttons(self.timer)
+        label, extend_ok, toggle_ok = timer_buttons(self.timer)
         tb = busy.get("_timer")
         self.timer_label.set_text(f"⏳ {tb}…" if tb else timer_label(self.timer))
         self.timer_toggle.set_label(label)
-        self.timer_toggle.set_sensitive(not tb)
+        self.timer_toggle.set_sensitive(toggle_ok and not tb)
         self.timer_extend.set_sensitive(extend_ok and not tb)
 
     def show(self):
@@ -446,8 +450,9 @@ def main_gui():
         if tw:
             tm = snap.get("timer", ("idle", 0))
             tw["head"].set_label(timer_label(tm))
-            lab, ext = timer_buttons(tm)
+            lab, ext, tog = timer_buttons(tm)
             tw["toggle"].set_label(lab)
+            tw["toggle"].set_sensitive(tog)
             tw["extend"].set_sensitive(ext)
         pn = panel_ref.get("panel")
         if pn is not None and pn.window.get_visible():

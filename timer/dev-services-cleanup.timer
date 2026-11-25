@@ -1,0 +1,10 @@
+[Unit]
+Description=One-hour testing window for development services
+
+[Timer]
+OnActiveSec=1h
+AccuracySec=1min
+Unit=dev-services-cleanup.service
+Persistent=false
+
+# Deliberately no [Install] section: armed explicitly by `lamp` / dev-services-lease (1h after a start).

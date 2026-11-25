@@ -2,6 +2,10 @@
 # Safe tests for ./lamp: none of these start a container.
 cd "$(dirname "$(readlink -f "$0")")/.."
 fail=0
+# tests must never touch the real ~/.local/bin, ~/.config/systemd or the running timer
+export DOCKER_CONFIG="${DOCKER_CONFIG:-$HOME/.docker}"
+export HOME=$(mktemp -d); export LAMP_SKIP_SYSTEMCTL=1
+trap 'rm -rf "$HOME"' EXIT
 ok()  { echo "PASS: $1"; }
 bad() { echo "FAIL: $1"; fail=1; }
 
@@ -78,7 +82,17 @@ fakel=$(mktemp); printf '#!/bin/sh\necho "$1" >> "%s.log"\n' "$fakel" > "$fakel"
 grep -q ok1 "$tcopy/res" && ok "timer off -> status disabled" || bad "timer off -> status disabled"
 grep -q ok2 "$tcopy/res" && ok "timer on removes the flag" || bad "timer on removes the flag"
 grep -q cancel "$fakel.log" && ok "timer off cancels the lease" || bad "timer off cancels the lease"
-rm -rf "$tcopy" "$fakel" "$fakel.log"
+# install into a fake HOME: symlinks to repo files, backup of a different old file, idempotent, uninstall
+fh=$(mktemp -d); mkdir -p "$fh/.local/bin"; echo old > "$fh/.local/bin/dev-services-lease"
+( cd "$tcopy" && env -u LAMP_LEASE HOME="$fh" LAMP_SKIP_SYSTEMCTL=1 ./lamp timer install ) >/dev/null 2>&1
+[ "$(readlink -f "$fh/.local/bin/dev-services-lease")" = "$(readlink -f "$tcopy/timer/dev-services-lease")" ] && ok "timer install links lease to repo" || bad "timer install links lease to repo"
+[ -f "$fh/.local/bin/dev-services-lease.bak" ] && ok "timer install keeps a different old file as .bak" || bad "timer install keeps a different old file as .bak"
+[ -L "$fh/.config/systemd/user/dev-services-cleanup.timer" ] && ok "timer install links the systemd units" || bad "timer install links the systemd units"
+( cd "$tcopy" && env -u LAMP_LEASE HOME="$fh" LAMP_SKIP_SYSTEMCTL=1 ./lamp timer install ) >/dev/null 2>&1 && ok "timer install is idempotent" || bad "timer install is idempotent"
+st=$( cd "$tcopy" && env -u LAMP_LEASE HOME="$fh" ./lamp timer status ); [ "$st" != missing ] && ok "status not missing after install" || bad "status not missing after install"
+( cd "$tcopy" && env -u LAMP_LEASE HOME="$fh" LAMP_SKIP_SYSTEMCTL=1 ./lamp timer uninstall ) >/dev/null 2>&1
+st=$( cd "$tcopy" && env -u LAMP_LEASE HOME="$fh" ./lamp timer status ); [ "$st" = missing ] && ok "status missing after uninstall" || bad "status missing after uninstall"
+rm -rf "$tcopy" "$fh" "$fakel" "$fakel.log"
 
 ./lamp ls >/dev/null 2>&1 && ok "ls exits 0" || bad "ls exits 0"
 exit $fail

@@ -1,0 +1,8 @@
+[Unit]
+Description=Stop development services after their testing window
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/dev-services-cleanup
+TimeoutStartSec=15min
+Nice=10
